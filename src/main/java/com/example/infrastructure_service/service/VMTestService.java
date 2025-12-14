@@ -1,101 +1,80 @@
-package com.example.cms_be.service;
+package com.example.infrastructure_service.service;
 
-import com.example.cms_be.dto.lab.LabTestResponse;
-import com.example.cms_be.model.Lab;
-import com.example.cms_be.repository.LabRepository;
-import com.example.cms_be.utils.PodLogWebSocketHandler;
-import com.example.cms_be.utils.SocketConnectionInfo;
-import com.example.cms_be.utils.VMTestAsyncExecutor;
-
+import com.example.infrastructure_service.dto.InstanceTypeDTO;
+import com.example.infrastructure_service.dto.LabTestRequest;
+import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import jakarta.persistence.EntityNotFoundException;
 import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class VMTestService {
 
-    private final LabRepository labRepository;
-    private final VMTestAsyncExecutor asyncExecutor;
     private final PodLogWebSocketHandler webSocketHandler;
-    private final SocketConnectionInfo socketConnectionInfo;
+    private final VMTestOrchestrationService orchestrationService;
 
-    private final ConcurrentHashMap<String, LabTestResponse> activeTests = new ConcurrentHashMap<>();
+    @Async
+    public void handleLabTestRequest(LabTestRequest request) {
+        String testVmName = request.getTestVmName();
+        
+        log.info("===========================================");
+        log.info(" [ASYNC] STARTING LAB TEST EXECUTION");
+        log.info(" Lab ID: {}", request.getLabId());
+        log.info(" Test VM Name: {}", testVmName);
+        log.info("===========================================");
+        
+        log.info("Step 1: Waiting for WebSocket client to connect...");
+        
+        boolean wsConnected = webSocketHandler.waitForConnection(testVmName, 30);
 
-    public LabTestResponse startLabTest(Integer labId) {
-        log.info(" [SYNC] Starting lab test for labId: {}", labId);
-
-        Lab lab = labRepository.findById(labId)
-                .orElseThrow(() -> new EntityNotFoundException("Lab not found with ID: " + labId));
-
-        // Force loading instancetype for hibernate lazy loading
-        if (lab.getInstanceType() != null) {
-            lab.getInstanceType().getId();
-            lab.getInstanceType().getStorageGb();
-            lab.getInstanceType().getMemoryGb();
-            lab.getInstanceType().getCpuCores();
+        if (!wsConnected) {
+            log.error("❌ WebSocket connection timeout for VM: {}", testVmName);
+            webSocketHandler.broadcastLogToPod(testVmName, "error",
+                    "❌ WebSocket connection timeout",
+                    Map.of("testVmName", testVmName));
+            return;
         }
 
+        log.info("✅ WebSocket client connected successfully!");
+        
+        webSocketHandler.broadcastLogToPod(testVmName, "connection",
+                "🔗 WebSocket connected successfully. Starting test...",
+                Map.of("testVmName", testVmName));
 
-        String testId = UUID.randomUUID().toString();
-        String timestamp = String.valueOf(System.currentTimeMillis() / 1000);
-        String testVmName = String.format("test-vm-%d-%s", lab.getId(), timestamp);
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
 
-        log.info(" Test ID: {}, Test VM Name: {}", testId, testVmName);
+        webSocketHandler.broadcastLogToPod(testVmName, "start",
+                String.format("🚀 Starting test for lab: %s (ID: %d)", request.getLabTitle(), request.getLabId()),
+                Map.of("labId", request.getLabId(), "labTitle", request.getLabTitle()));
 
-
-        Map<String, Object> connectionInfo = socketConnectionInfo.createWebSocketConnectionInfo(testVmName);
-        String wsUrl = (String) connectionInfo.get("url");
-
-
-        LabTestResponse response = LabTestResponse.builder()
-                .testId(testId)
-                .labId(lab.getId())
-                .testVmName(testVmName)
-                .status("WAITING_CONNECTION")
-                .websocketUrl(wsUrl)
-                .connectionInfo(connectionInfo)
-                .build();
-
-        activeTests.put(testId, response);
-
-
-        log.info(" Calling asyncExecutor.executeTestAsync()");
-        asyncExecutor.executeTestAsync(
-                testId,
-                lab,
-                lab.getInstanceType(),
+        boolean success = orchestrationService.executeTestWorkflow(
+                request.getLabId(),
+                request.getLabTitle(),
                 testVmName,
-                lab.getNamespace(),
+                request.getNamespace(),
                 1800,
-                activeTests
+                request.getInstanceType()
         );
 
-        log.info(" Test request accepted. Client should connect to WebSocket: {}", wsUrl);
-        return response;
-    }
-
-    public LabTestResponse getTestStatus(String testId) {
-        LabTestResponse response = activeTests.get(testId);
-        if (response == null) {
-            throw new EntityNotFoundException("Test not found with ID: " + testId);
+        if (success) {
+            webSocketHandler.broadcastLogToPod(testVmName, "success",
+                    "✅ Test completed successfully!",
+                    Map.of("status", "COMPLETED"));
+        } else {
+            webSocketHandler.broadcastLogToPod(testVmName, "error",
+                    "❌ Test failed!",
+                    Map.of("status", "FAILED"));
         }
-        return response;
-    }
 
-    public void cancelTest(String testId) {
-        LabTestResponse response = activeTests.get(testId);
-        if (response != null) {
-            response.setStatus("CANCELLED");
-            webSocketHandler.broadcastLogToPod(response.getTestVmName(), "warning",
-                    "⚠️ Test cancelled by user",
-                    Map.of("testId", testId));
-        }
+        log.info("✅ LAB TEST EXECUTION FINISHED - Success: {}", success);
     }
 }
