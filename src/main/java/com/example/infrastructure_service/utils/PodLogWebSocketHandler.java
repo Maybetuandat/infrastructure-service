@@ -1,4 +1,4 @@
-package com.example.cms_be.ultil;
+package com.example.infrastructure_service.utils;
 
 import java.io.IOException;
 import java.util.concurrent.ConcurrentHashMap;
