@@ -29,7 +29,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
     // Lưu trữ mapping giữa sessionId và podName để filter messages
     private final ConcurrentHashMap<String, String> sessionPodMapping = new ConcurrentHashMap<>();
     
-    // ✅ Lưu trữ các CountDownLatch đang đợi WebSocket connection
+    // Lưu trữ các CountDownLatch đang đợi WebSocket connection
     private final ConcurrentHashMap<String, CountDownLatch> connectionLatches = new ConcurrentHashMap<>();
 
     @Override
@@ -43,163 +43,112 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         
         if (podName != null) {
             sessionPodMapping.put(sessionId, podName);
-            log.info("✅ WebSocket connection established for session {} with podName {}", sessionId, podName);
+            log.info("WebSocket connection established for session {} with podName {}", sessionId, podName);
             
-            // ✅ Gửi message confirmation
-            sendMessage(session, new WebSocketMessage("connection", 
-                "Connected to pod logs stream for: " + podName, null));
-            
-            // ✅ Thông báo cho các thread đang đợi connection này
-            CountDownLatch latch = connectionLatches.get(podName);
+            //  Release latch để cho phép Kafka consumer tiếp tục xử lý
+            CountDownLatch latch = connectionLatches.remove(podName);
             if (latch != null) {
-                log.info("🔔 Notifying waiting threads that WebSocket is ready for: {}", podName);
+                log.info("🔓 Releasing connection latch for podName: {}", podName);
                 latch.countDown();
             }
+            
+            // Gửi message confirmation
+            sendMessage(session, new WebSocketMessage("connection", 
+                "Connected to pod logs stream for: " + podName, null));
         } else {
-            log.warn("WebSocket connection established but no podName provided for session {}", sessionId);
-            session.close(CloseStatus.BAD_DATA.withReason("podName parameter is required"));
+            log.warn(" WebSocket connection established but no podName found in query");
         }
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String sessionId = session.getId();
-        String podName = sessionPodMapping.get(sessionId);
-        
+        String podName = sessionPodMapping.remove(sessionId);
         sessions.remove(sessionId);
-        sessionPodMapping.remove(sessionId);
         
-        if (podName != null) {
-            connectionLatches.remove(podName);
-        }
-        
-        log.info("WebSocket connection closed for session {}: {}", sessionId, status.toString());
-    }
-
-    @Override
-    public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
-        String sessionId = session.getId();
-        String podName = sessionPodMapping.get(sessionId);
-        
-        // ✅ Chỉ log warning cho Broken Pipe và Connection Reset (không phải error)
-        if (exception.getMessage() != null && 
-            (exception.getMessage().contains("Broken pipe") || 
-             exception.getMessage().contains("Connection reset"))) {
-            log.warn("WebSocket connection lost for session {}: {}", sessionId, exception.getMessage());
-        } else {
-            log.error("WebSocket transport error for session {}: {}", sessionId, exception.getMessage());
-        }
-        
-        // Clean up
-        sessions.remove(sessionId);
-        sessionPodMapping.remove(sessionId);
-        if (podName != null) {
-            connectionLatches.remove(podName);
-        }
-        
-        // ✅ Close session safely
-        try {
-            if (session.isOpen()) {
-                session.close(CloseStatus.SERVER_ERROR);
-            }
-        } catch (Exception e) {
-            log.debug("Error closing session after transport error: {}", e.getMessage());
-        }
+        log.info(" WebSocket connection closed for session {} (podName: {}). Status: {}", 
+            sessionId, podName, status);
     }
 
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        log.debug("Received message from client {}: {}", session.getId(), message.getPayload());
+        log.debug("Received message from session {}: {}", session.getId(), message.getPayload());
     }
 
-    /**
-     * ✅ Đợi cho đến khi có ít nhất một WebSocket client kết nối đến podName này
-     * @param podName tên của pod cần đợi connection
-     * @param timeoutSeconds thời gian đợi tối đa (giây)
-     * @return true nếu connection được thiết lập, false nếu timeout
-     */
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
+        log.error("WebSocket transport error for session {}: {}", session.getId(), exception.getMessage());
+    }
+
+   
     public boolean waitForConnection(String podName, int timeoutSeconds) {
+        log.info(" Waiting for WebSocket connection for podName: {} (timeout: {}s)", podName, timeoutSeconds);
+        
         // Kiểm tra xem đã có connection chưa
-        if (hasActiveSessionsForPod(podName)) {
-            log.info("✅ WebSocket already connected for pod: {}", podName);
+        if (isConnected(podName)) {
+            log.info(" WebSocket already connected for podName: {}", podName);
             return true;
         }
         
-        log.info("⏳ Waiting for WebSocket connection for pod: {} (timeout: {}s)", podName, timeoutSeconds);
-        
-        // Tạo latch để đợi
+        // Tạo latch mới
         CountDownLatch latch = new CountDownLatch(1);
         connectionLatches.put(podName, latch);
         
         try {
-            // Đợi connection hoặc timeout
             boolean connected = latch.await(timeoutSeconds, TimeUnit.SECONDS);
             
             if (connected) {
-                log.info("✅ WebSocket connection established for pod: {}", podName);
-                return true;
+                log.info(" WebSocket connection successful for podName: {}", podName);
             } else {
-                log.warn("⏰ Timeout waiting for WebSocket connection for pod: {}", podName);
-                return false;
+                log.warn(" WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
+                connectionLatches.remove(podName); // Cleanup
             }
+            
+            return connected;
         } catch (InterruptedException e) {
-            log.error("❌ Interrupted while waiting for WebSocket connection for pod: {}", podName);
             Thread.currentThread().interrupt();
+            log.error(" Interrupted while waiting for WebSocket connection: {}", e.getMessage());
+            connectionLatches.remove(podName); // Cleanup
             return false;
-        } finally {
-            connectionLatches.remove(podName);
         }
     }
 
     /**
-     * Gửi log message đến tất cả clients đang theo dõi pod cụ thể
+     * Kiểm tra xem có WebSocket session nào đang kết nối cho podName này không
      */
-    public void broadcastLogToPod(String podName, String logType, String message, Object data) {
-        WebSocketMessage wsMessage = new WebSocketMessage(logType, message, data);
-        
-        // ✅ Sử dụng removeIf để tự động clean up dead sessions
-        sessions.entrySet().removeIf(entry -> {
-            String sessionId = entry.getKey();
-            WebSocketSession session = entry.getValue();
-            String sessionPodName = sessionPodMapping.get(sessionId);
-            
-            // Chỉ gửi cho sessions đang subscribe pod này
-            if (podName.equals(sessionPodName)) {
-                try {
-                    if (session.isOpen()) {
-                        sendMessage(session, wsMessage);
-                        return false; // Giữ session này
-                    } else {
-                        log.debug("Removing closed session: {}", sessionId);
-                        sessionPodMapping.remove(sessionId);
-                        return true; // Xóa session đã đóng
-                    }
-                } catch (IOException e) {
-                    // ✅ Chỉ log warning cho Broken Pipe
-                    if (e.getMessage() != null && 
-                        (e.getMessage().contains("Broken pipe") || 
-                         e.getMessage().contains("Connection reset"))) {
-                        log.debug("Client disconnected (session {}): {}", sessionId, e.getMessage());
-                    } else {
-                        log.warn("Failed to send message to session {}: {}", sessionId, e.getMessage());
-                    }
-                    sessionPodMapping.remove(sessionId);
-                    return true; // Xóa session lỗi
-                }
-            }
-            return false;
-        });
+    private boolean isConnected(String podName) {
+        return sessionPodMapping.containsValue(podName) && 
+               sessions.values().stream()
+                   .anyMatch(s -> podName.equals(sessionPodMapping.get(s.getId())) && s.isOpen());
     }
 
     /**
-     * Gửi message đến một session cụ thể (thread-safe)
+     * Broadcast log message đến tất cả sessions đang theo dõi pod này
      */
-    private void sendMessage(WebSocketSession session, WebSocketMessage message) throws IOException {
-        if (session.isOpen()) {
-            synchronized (session) { // ✅ Thread-safe cho việc gửi message
-                String jsonMessage = objectMapper.writeValueAsString(message);
-                session.sendMessage(new TextMessage(jsonMessage));
-            }
+    public void broadcastLogToPod(String podName, String type, String message, Object metadata) {
+        WebSocketMessage wsMessage = new WebSocketMessage(type, message, metadata);
+        
+        sessionPodMapping.entrySet().stream()
+            .filter(entry -> podName.equals(entry.getValue()))
+            .forEach(entry -> {
+                String sessionId = entry.getKey();
+                WebSocketSession session = sessions.get(sessionId);
+                
+                if (session != null && session.isOpen()) {
+                    sendMessage(session, wsMessage);
+                }
+            });
+    }
+
+    /**
+     * Gửi message đến một session cụ thể
+     */
+    private void sendMessage(WebSocketSession session, WebSocketMessage message) {
+        try {
+            String json = objectMapper.writeValueAsString(message);
+            session.sendMessage(new TextMessage(json));
+        } catch (IOException e) {
+            log.error("Failed to send WebSocket message: {}", e.getMessage());
         }
     }
 
@@ -207,7 +156,9 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
      * Extract podName từ query string
      */
     private String extractPodNameFromQuery(String query) {
-        if (query == null) return null;
+        if (query == null || query.isEmpty()) {
+            return null;
+        }
         
         String[] params = query.split("&");
         for (String param : params) {
@@ -216,40 +167,22 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
                 return keyValue[1];
             }
         }
+        
         return null;
     }
 
     /**
-     * Kiểm tra xem có session nào đang theo dõi pod này không
-     */
-    public boolean hasActiveSessionsForPod(String podName) {
-        return sessionPodMapping.containsValue(podName);
-    }
-
-    /**
-     * Class đại diện cho WebSocket message
+     * Inner class cho WebSocket message structure
      */
     public static class WebSocketMessage {
         public String type;
         public String message;
-        public Object data;
-        public long timestamp;
-
-        public WebSocketMessage(String type, String message, Object data) {
+        public Object metadata;
+        
+        public WebSocketMessage(String type, String message, Object metadata) {
             this.type = type;
             this.message = message;
-            this.data = data;
-            this.timestamp = System.currentTimeMillis();
+            this.metadata = metadata;
         }
-
-        // Getters and setters for JSON serialization
-        public String getType() { return type; }
-        public void setType(String type) { this.type = type; }
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
-        public Object getData() { return data; }
-        public void setData(Object data) { this.data = data; }
-        public long getTimestamp() { return timestamp; }
-        public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
     }
 }

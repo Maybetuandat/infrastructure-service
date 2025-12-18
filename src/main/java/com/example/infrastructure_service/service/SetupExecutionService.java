@@ -2,7 +2,6 @@ package com.example.infrastructure_service.service;
 
 import com.example.infrastructure_service.dto.LabProvisionRequest;
 import com.example.infrastructure_service.dto.LabProvisionResponse;
-import com.example.infrastructure_service.kafka.ProvisionResponseProducer;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.*;
@@ -27,7 +26,7 @@ public class SetupExecutionService {
     
     private final ObjectMapper objectMapper;
     private final ApiClient apiClient;
-    private final ProvisionResponseProducer responseProducer;
+    
     private static final Logger executionLogger = LoggerFactory.getLogger("executionLogger");
     
     private final String defaultUsername = "ubuntu";
@@ -35,11 +34,9 @@ public class SetupExecutionService {
     
     public SetupExecutionService(
             ObjectMapper objectMapper,
-            @Qualifier("longTimeoutApiClient") ApiClient apiClient,
-            ProvisionResponseProducer responseProducer) {
+            @Qualifier("longTimeoutApiClient") ApiClient apiClient) {
         this.objectMapper = objectMapper;
         this.apiClient = apiClient;
-        this.responseProducer = responseProducer;
         this.apiClient.setReadTimeout(0);
     }
     
@@ -94,15 +91,10 @@ public class SetupExecutionService {
                 }
             }
             
-            if (!overallSuccess) {
-                sendStatusUpdate(request.getSessionId(), "SETUP_FAILED", 
-                    request.getVmName(), "Setup steps execution failed");
-            }
+           
             
         } catch (Exception e) {
             log.error("Setup failed for session {}: {}", request.getSessionId(), e.getMessage(), e);
-            sendStatusUpdate(request.getSessionId(), "SETUP_FAILED", 
-                request.getVmName(), "Error: " + e.getMessage());
             throw e;
         } finally {
             if (sshSession != null && sshSession.isConnected()) {
@@ -189,12 +181,7 @@ public class SetupExecutionService {
         }
     }
     
-    private void sendStatusUpdate(Integer sessionId, String status, String podName, String message) {
-        LabProvisionResponse response = new LabProvisionResponse(
-            sessionId, status, message, podName, null
-        );
-        responseProducer.sendProvisionResponse(response);
-    }
+  
     
     public static class K8sTunnelSocketFactory implements SocketFactory {
         private final ApiClient apiClient;
