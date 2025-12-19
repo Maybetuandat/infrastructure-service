@@ -14,7 +14,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileCopyUtils;
 
-import com.example.infrastructure_service.dto.LabProvisionRequest;
+import com.example.infrastructure_service.dto.LabTestRequest;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -47,17 +47,27 @@ public class VMService {
     @Value("${CDI_VERSION}")
     private String CDI_VERSION;
     
-    public void createKubernetesResources(LabProvisionRequest request) throws IOException, ApiException {
-        String vmName = request.getVmName();
+    public void createKubernetesResourcesForTest(LabTestRequest request) throws IOException, ApiException {
+        String vmName = request.getTestVmName();
         String namespace = request.getNamespace();
         
         ensureNamespaceExists(namespace);
-        createPvc(vmName, namespace, request.getStorageGb().toString(), request.getStorageGb().toString() );
-        createVirtualMachine(vmName, namespace, request.getCpuCores().toString(), request.getMemoryGb().toString());
+        
+        createPvc(
+            vmName, 
+            namespace, 
+            request.getInstanceType().getBackingImage(),
+            request.getInstanceType().getStorageGb().toString()
+        );
+        
+        createVirtualMachine(
+            vmName, 
+            namespace, 
+            request.getInstanceType().getMemoryGb().toString(),
+            request.getInstanceType().getCpuCores().toString()
+        );
     }
     
-    
-    // this function ensures that the namespace exists; if not, it creates it
     public void ensureNamespaceExists(String namespace) throws ApiException {
         try {
             coreApi.readNamespace(namespace, null);
@@ -78,7 +88,8 @@ public class VMService {
             }
         }
     }
-     public void createPvc(String vmName, String namespace, String backingImage, String storage) throws IOException, ApiException {
+    
+    public void createPvc(String vmName, String namespace, String backingImage, String storage) throws IOException, ApiException {
         Map<String, String> values = Map.of(
                 "NAME", vmName,
                 "NAMESPACE", namespace,
@@ -94,7 +105,6 @@ public class VMService {
             coreApi.createNamespacedPersistentVolumeClaim(namespace, pvcBody, null, null, null, null);
             log.info("PersistentVolumeClaim '{}' created successfully.", vmName);
         } catch (ApiException e) {
-            // Nếu PVC đã tồn tại thì bỏ qua lỗi (Idempotency)
             if (e.getCode() == 409) {
                 log.info("PersistentVolumeClaim '{}' already exists.", vmName);
             } else {
@@ -103,6 +113,7 @@ public class VMService {
             }
         }
     }
+    
     private String loadAndRenderTemplate(String templatePath, Map<String, String> values) throws IOException {
         ClassPathResource resource = new ClassPathResource(templatePath);
         InputStreamReader reader = new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8);
@@ -113,7 +124,6 @@ public class VMService {
         }
         return template;
     }
-    
     
     public void createVirtualMachine(String vmName, String namespace, String memory, String cpu) throws IOException, ApiException {
         Map<String, String> values = Map.of(

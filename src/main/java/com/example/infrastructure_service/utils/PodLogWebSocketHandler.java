@@ -43,9 +43,9 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         
         if (podName != null) {
             sessionPodMapping.put(sessionId, podName);
-            log.info("WebSocket connection established for session {} with podName {}", sessionId, podName);
+            log.info("✅ WebSocket connection established for session {} with podName {}", sessionId, podName);
             
-            //  Release latch để cho phép Kafka consumer tiếp tục xử lý
+            // Release latch để cho phép Kafka consumer tiếp tục xử lý
             CountDownLatch latch = connectionLatches.remove(podName);
             if (latch != null) {
                 log.info("🔓 Releasing connection latch for podName: {}", podName);
@@ -56,7 +56,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             sendMessage(session, new WebSocketMessage("connection", 
                 "Connected to pod logs stream for: " + podName, null));
         } else {
-            log.warn(" WebSocket connection established but no podName found in query");
+            log.warn("⚠️ WebSocket connection established but no podName found in query");
         }
     }
 
@@ -66,7 +66,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         String podName = sessionPodMapping.remove(sessionId);
         sessions.remove(sessionId);
         
-        log.info(" WebSocket connection closed for session {} (podName: {}). Status: {}", 
+        log.info("❌ WebSocket connection closed for session {} (podName: {}). Status: {}", 
             sessionId, podName, status);
     }
 
@@ -80,13 +80,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         log.error("WebSocket transport error for session {}: {}", session.getId(), exception.getMessage());
     }
 
-   
     public boolean waitForConnection(String podName, int timeoutSeconds) {
-        log.info(" Waiting for WebSocket connection for podName: {} (timeout: {}s)", podName, timeoutSeconds);
+        log.info("⏳ Waiting for WebSocket connection for podName: {} (timeout: {}s)", podName, timeoutSeconds);
         
         // Kiểm tra xem đã có connection chưa
         if (isConnected(podName)) {
-            log.info(" WebSocket already connected for podName: {}", podName);
+            log.info("✅ WebSocket already connected for podName: {}", podName);
             return true;
         }
         
@@ -98,24 +97,21 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             boolean connected = latch.await(timeoutSeconds, TimeUnit.SECONDS);
             
             if (connected) {
-                log.info(" WebSocket connection successful for podName: {}", podName);
+                log.info("✅ WebSocket connection successful for podName: {}", podName);
             } else {
-                log.warn(" WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
-                connectionLatches.remove(podName); // Cleanup
+                log.warn("⚠️ WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
+                connectionLatches.remove(podName);
             }
             
             return connected;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error(" Interrupted while waiting for WebSocket connection: {}", e.getMessage());
-            connectionLatches.remove(podName); // Cleanup
+            log.error("❌ Interrupted while waiting for WebSocket connection: {}", e.getMessage());
+            connectionLatches.remove(podName);
             return false;
         }
     }
 
-    /**
-     * Kiểm tra xem có WebSocket session nào đang kết nối cho podName này không
-     */
     private boolean isConnected(String podName) {
         return sessionPodMapping.containsValue(podName) && 
                sessions.values().stream()
@@ -124,6 +120,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
 
     /**
      * Broadcast log message đến tất cả sessions đang theo dõi pod này
+     * Synchronized để tránh concurrent sending
      */
     public void broadcastLogToPod(String podName, String type, String message, Object metadata) {
         WebSocketMessage wsMessage = new WebSocketMessage(type, message, metadata);
@@ -135,21 +132,33 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
                 WebSocketSession session = sessions.get(sessionId);
                 
                 if (session != null && session.isOpen()) {
-                    sendMessage(session, wsMessage);
+                    sendMessageSafely(session, wsMessage);
                 }
             });
+    }
+
+    /**
+     * Gửi message đến một session cụ thể với synchronization
+     */
+    private synchronized void sendMessageSafely(WebSocketSession session, WebSocketMessage message) {
+        try {
+            String json = objectMapper.writeValueAsString(message);
+            synchronized (session) {
+                if (session.isOpen()) {
+                    session.sendMessage(new TextMessage(json));
+                }
+            }
+        } catch (IOException e) {
+            log.error("Failed to send WebSocket message to session {}: {}", 
+                session.getId(), e.getMessage());
+        }
     }
 
     /**
      * Gửi message đến một session cụ thể
      */
     private void sendMessage(WebSocketSession session, WebSocketMessage message) {
-        try {
-            String json = objectMapper.writeValueAsString(message);
-            session.sendMessage(new TextMessage(json));
-        } catch (IOException e) {
-            log.error("Failed to send WebSocket message: {}", e.getMessage());
-        }
+        sendMessageSafely(session, message);
     }
 
     /**

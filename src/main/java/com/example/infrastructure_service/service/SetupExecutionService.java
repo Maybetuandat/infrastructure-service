@@ -1,7 +1,6 @@
 package com.example.infrastructure_service.service;
 
-import com.example.infrastructure_service.dto.LabProvisionRequest;
-import com.example.infrastructure_service.dto.LabProvisionResponse;
+import com.example.infrastructure_service.dto.LabTestRequest;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.*;
@@ -40,8 +39,8 @@ public class SetupExecutionService {
         this.apiClient.setReadTimeout(0);
     }
     
-    public void executeSetupSteps(LabProvisionRequest request, String podName) throws Exception {
-        log.info("Starting setup steps execution for session ID: {} via K8s SocketFactory", request.getSessionId());
+    public void executeSetupStepsForTest(LabTestRequest request, String podName) throws Exception {
+        log.info("Starting setup steps execution for lab test: {} via K8s SocketFactory", request.getTestVmName());
         
         JSch jsch = new JSch();
         Session sshSession = null;
@@ -53,7 +52,7 @@ public class SetupExecutionService {
             );
             
             if (setupSteps.isEmpty()) {
-                log.info("No setup steps to execute for session {}", request.getSessionId());
+                log.info("No setup steps to execute for test VM {}", request.getTestVmName());
                 return;
             }
             
@@ -63,9 +62,8 @@ public class SetupExecutionService {
             
             sshSession = connectSshWithRetry(jsch, request.getNamespace(), podName, 20, 5000);
             
-            log.info("[Session {}] SSH connected via K8s Tunnel. Executing steps...", request.getSessionId());
+            log.info("[Test VM {}] SSH connected via K8s Tunnel. Executing steps...", request.getTestVmName());
             
-            boolean overallSuccess = true;
             for (Map<String, Object> step : setupSteps) {
                 String title = (String) step.get("title");
                 String command = (String) step.get("setupCommand");
@@ -73,7 +71,7 @@ public class SetupExecutionService {
                 Integer timeoutSeconds = (Integer) step.getOrDefault("timeoutSeconds", 300);
                 Boolean continueOnFailure = (Boolean) step.getOrDefault("continueOnFailure", false);
                 
-                log.info("[Session {}] Executing: {}", request.getSessionId(), title);
+                log.info("[Test VM {}] Executing: {}", request.getTestVmName(), title);
                 
                 ExecuteCommandResult result = executeCommandOnSession(
                     sshSession, 
@@ -81,20 +79,17 @@ public class SetupExecutionService {
                     timeoutSeconds
                 );
                 
-                logStepResult(request.getSessionId(), title, result, expectedExitCode);
+                logStepResult(request.getTestVmName(), title, result, expectedExitCode);
                 
                 if (result.getExitCode() != expectedExitCode) {
                     if (!continueOnFailure) {
-                        overallSuccess = false;
                         break;
                     }
                 }
             }
             
-           
-            
         } catch (Exception e) {
-            log.error("Setup failed for session {}: {}", request.getSessionId(), e.getMessage(), e);
+            log.error("Setup failed for test VM {}: {}", request.getTestVmName(), e.getMessage(), e);
             throw e;
         } finally {
             if (sshSession != null && sshSession.isConnected()) {
@@ -171,17 +166,15 @@ public class SetupExecutionService {
         return new ExecuteCommandResult(exitCode, outputBuffer.toString().trim(), "");
     }
     
-    private void logStepResult(Integer sessionId, String stepTitle, 
+    private void logStepResult(String testVmName, String stepTitle, 
                                ExecuteCommandResult result, Integer expectedExitCode) {
         if (result.getExitCode() == expectedExitCode) {
-            executionLogger.info("SESSION_ID={}|STEP='{}'|SUCCESS", sessionId, stepTitle);
+            executionLogger.info("TEST_VM={}|STEP='{}'|SUCCESS", testVmName, stepTitle);
         } else {
-            executionLogger.error("SESSION_ID={}|STEP='{}'|FAILED|Code={}\nOUT: {}\nERR: {}",
-                sessionId, stepTitle, result.getExitCode(), result.getStdout(), result.getStderr());
+            executionLogger.error("TEST_VM={}|STEP='{}'|FAILED|Code={}\nOUT: {}\nERR: {}",
+                testVmName, stepTitle, result.getExitCode(), result.getStdout(), result.getStderr());
         }
     }
-    
-  
     
     public static class K8sTunnelSocketFactory implements SocketFactory {
         private final ApiClient apiClient;

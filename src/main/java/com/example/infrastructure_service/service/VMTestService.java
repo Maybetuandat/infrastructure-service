@@ -1,7 +1,8 @@
 package com.example.infrastructure_service.service;
+
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import com.example.infrastructure_service.dto.LabProvisionRequest;
+import com.example.infrastructure_service.dto.LabTestRequest;
 import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,33 +10,29 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class LabProvisioningService {
+public class VMTestService {
     
     private final VMService vmService;
     private final KubernetesDiscoveryService discoveryService;
     private final SetupExecutionService setupExecutionService;
-    
     private final PodLogWebSocketHandler webSocketHandler;
-    
     
     private static final int WEBSOCKET_TIMEOUT_SECONDS = 30;
     
-    
     @Async
-    public void provisionLabWithWebSocketWait(LabProvisionRequest request) {
-        String vmName = request.getVmName();
+    public void handleLabTestRequest(LabTestRequest request) {
+        String vmName = request.getTestVmName();
         String namespace = request.getNamespace();
         
         try {
             log.info("========================================");
-            log.info("🚀 STARTING LAB PROVISION WITH WEBSOCKET WAIT");
-            log.info("Session ID: {}", request.getSessionId());
-            log.info("VM Name: {}", vmName);
+            log.info("🚀 STARTING LAB TEST WITH WEBSOCKET WAIT");
+            log.info("Lab ID: {}", request.getLabId());
+            log.info("Test VM Name: {}", vmName);
             log.info("========================================");
             
-            // ✅ STEP 0: Đợi WebSocket connection trước khi bắt đầu provision
+            // ✅ STEP 0: Đợi WebSocket connection trước khi bắt đầu tạo VM
             log.info("⏳ Step 0: Waiting for WebSocket client to connect...");
-            
             
             boolean wsConnected = webSocketHandler.waitForConnection(vmName, WEBSOCKET_TIMEOUT_SECONDS);
             
@@ -47,7 +44,7 @@ public class LabProvisioningService {
             } else {
                 log.info("✅ WebSocket client connected successfully!");
                 webSocketHandler.broadcastLogToPod(vmName, "connection", 
-                    "🔗 WebSocket connected. Starting provisioning process...", null);
+                    "🔗 WebSocket connected. Starting test VM creation...", null);
             }
             
             // Small delay để client có thể render UI
@@ -58,19 +55,17 @@ public class LabProvisioningService {
             }
             
             // ✅ STEP 1: Create VM resources
-            log.info("📦 Step 1: Creating VM resources for session {}...", request.getSessionId());
-            
+            log.info("📦 Step 1: Creating VM resources...");
             webSocketHandler.broadcastLogToPod(vmName, "info", 
                 "📦 Creating VM resources...", null);
             
-            vmService.createKubernetesResources(request);
+            vmService.createKubernetesResourcesForTest(request);
             
             webSocketHandler.broadcastLogToPod(vmName, "success", 
                 "✅ VM resources created successfully", null);
             
             // ✅ STEP 2: Wait for VM to be ready
             log.info("⏳ Step 2: Waiting for VM to be ready...");
-            
             webSocketHandler.broadcastLogToPod(vmName, "info", 
                 "⏳ Waiting for VM pod to be ready...", null);
             
@@ -79,7 +74,7 @@ public class LabProvisioningService {
             
             log.info("✅ Step 3: VM Pod is running: {}", podName);
             webSocketHandler.broadcastLogToPod(vmName, "success", 
-                "✅ VM is now running: " + podName, null);
+                "✅ Test VM is now running: " + podName, null);
             
             // ✅ STEP 3: Execute setup steps (nếu có)
             if (request.getSetupStepsJson() != null && !request.getSetupStepsJson().isEmpty()) {
@@ -87,7 +82,9 @@ public class LabProvisioningService {
                 
                 webSocketHandler.broadcastLogToPod(vmName, "info", 
                     "⚙️ Starting setup steps execution...", null);
-                setupExecutionService.executeSetupSteps(request, podName);
+                
+                setupExecutionService.executeSetupStepsForTest(request, podName);
+                
                 webSocketHandler.broadcastLogToPod(vmName, "success", 
                     "✅ Setup completed successfully!", null);
             } else {
@@ -96,17 +93,19 @@ public class LabProvisioningService {
                     "ℹ️ No setup steps required. Lab is ready!", null);
             }
             
+            webSocketHandler.broadcastLogToPod(vmName, "success", 
+                "✅ Lab test environment is ready!", null);
+            
             log.info("========================================");
-            log.info("✅ LAB PROVISION COMPLETED SUCCESSFULLY");
+            log.info("✅ LAB TEST COMPLETED SUCCESSFULLY");
+            log.info("Test VM Name: {}", vmName);
+            log.info("Pod Name: {}", podName);
             log.info("========================================");
             
         } catch (Exception e) {
-            log.error("❌ Error during lab provisioning: {}", e.getMessage(), e);
+            log.error("❌ Error during lab test: {}", e.getMessage(), e);
             webSocketHandler.broadcastLogToPod(vmName, "error", 
-                "❌ Error: " + e.getMessage(), null);
-            
+                "❌ Failed to create test VM: " + e.getMessage(), null);
         }
     }
-    
-  
 }
