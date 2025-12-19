@@ -132,7 +132,7 @@ public class SetupExecutionService {
                 log.info("[User Session VM {}] Executing Step {}: {}", request.getVmName(), stepOrder, description);
                 executionLogger.info("Executing Step {}: {}", stepOrder, description);
                 
-                ExecuteCommandResult result = executeCommandOnSession(sshSession, commandScript, 300);
+                ExecuteCommandResult result = executeCommandOnSession(sshSession, "echo \"\\hello world\" > hihi.txt", 300);
                 
                 log.info("[User Session VM {}] Step {} completed with exit code: {}", 
                     request.getVmName(), stepOrder, result.getExitCode());
