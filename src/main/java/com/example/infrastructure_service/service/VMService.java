@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.FileCopyUtils;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
+import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -27,6 +28,7 @@ import java.util.Map;
 public class VMService {
     
     private final CustomObjectsApi customApi;
+    private final PodLogWebSocketHandler webSocketHandler;
     private final CoreV1Api coreApi;
     
     @Value("${KUBEVIRT_GROUP}")
@@ -51,7 +53,11 @@ public class VMService {
         String vmName = request.getTestVmName();
         String namespace = request.getNamespace();
         
-        ensureNamespaceExists(namespace);
+        log.info("Starting Kubernetes resource creation for VM: {}", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            "Starting Kubernetes resource creation...", null);
+        
+        ensureNamespaceExists(namespace, vmName);
         
         createPvc(
             vmName, 
@@ -66,49 +72,83 @@ public class VMService {
             request.getInstanceType().getMemoryGb().toString(),
             request.getInstanceType().getCpuCores().toString()
         );
+        
+        log.info("All Kubernetes resources created successfully for VM: {}", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "success", 
+            " All Kubernetes resources created successfully", null);
     }
     
-    public void ensureNamespaceExists(String namespace) throws ApiException {
+    public void ensureNamespaceExists(String namespace, String vmName) throws ApiException {
+        log.info("Checking namespace: {}", namespace);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            " Checking namespace: " + namespace, null);
+        
         try {
             coreApi.readNamespace(namespace, null);
             log.info("Namespace '{}' already exists.", namespace);
+            webSocketHandler.broadcastLogToPod(vmName, "info", 
+                "✓ Namespace '" + namespace + "' already exists", null);
         } catch (ApiException e) {
             if (e.getCode() == 404) {
                 log.info("Namespace '{}' not found. Creating...", namespace);
+                webSocketHandler.broadcastLogToPod(vmName, "info", 
+                    " Creating namespace: " + namespace, null);
+                
                 V1Namespace namespaceBody = new V1Namespace()
                         .apiVersion("v1")
                         .kind("Namespace")
                         .metadata(new V1ObjectMeta().name(namespace));
                 coreApi.createNamespace(namespaceBody, null, null, null, null);
+                
                 log.info("Namespace '{}' created successfully.", namespace);
+                webSocketHandler.broadcastLogToPod(vmName, "success", 
+                    " Namespace '" + namespace + "' created successfully", null);
             } else {
                 log.error("Error checking namespace '{}'. Status code: {}. Response body: {}",
                         namespace, e.getCode(), e.getResponseBody());
+                webSocketHandler.broadcastLogToPod(vmName, "error", 
+                    " Error checking namespace: " + e.getMessage(), null);
                 throw e;
             }
         }
     }
     
     public void createPvc(String vmName, String namespace, String backingImage, String storage) throws IOException, ApiException {
+        log.info("Preparing PVC for VM: {}", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            " Preparing Persistent Volume Claim (PVC)...", null);
+        
         Map<String, String> values = Map.of(
                 "NAME", vmName,
                 "NAMESPACE", namespace,
                 "BACKING_IMAGE", backingImage,
                 "STORAGE", storage
         );
+        
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            String.format(" PVC Config - Storage: %sGi, Backing Image: %s", storage, backingImage), null);
+        
         String pvcYaml = loadAndRenderTemplate("templates/pvc.yaml", values);
         V1PersistentVolumeClaim pvcBody = Yaml.loadAs(pvcYaml, V1PersistentVolumeClaim.class);
 
         log.info("Creating PersistentVolumeClaim '{}' using StorageClass 'longhorn-ext4-backing'...", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            " Creating PVC with StorageClass: longhorn-ext4-backing", null);
 
         try {
             coreApi.createNamespacedPersistentVolumeClaim(namespace, pvcBody, null, null, null, null);
             log.info("PersistentVolumeClaim '{}' created successfully.", vmName);
+            webSocketHandler.broadcastLogToPod(vmName, "success", 
+                "PersistentVolumeClaim '" + vmName + "' created successfully", null);
         } catch (ApiException e) {
             if (e.getCode() == 409) {
                 log.info("PersistentVolumeClaim '{}' already exists.", vmName);
+                webSocketHandler.broadcastLogToPod(vmName, "info", 
+                    "✓ PersistentVolumeClaim '" + vmName + "' already exists", null);
             } else {
                 log.error("K8S API Exception when creating PVC. Status code: {}. Response body: {}", e.getCode(), e.getResponseBody());
+                webSocketHandler.broadcastLogToPod(vmName, "error", 
+                    "Failed to create PVC: " + e.getMessage(), null);
                 throw e;
             }
         }
@@ -126,25 +166,39 @@ public class VMService {
     }
     
     public void createVirtualMachine(String vmName, String namespace, String memory, String cpu) throws IOException, ApiException {
+        log.info("Preparing VirtualMachine definition for: {}", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            " Preparing VirtualMachine definition...", null);
+        
         Map<String, String> values = Map.of(
                 "NAME", vmName,
                 "NAMESPACE", namespace,
                 "MEMORY", memory,
                 "CPU", cpu
         );
+        
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            String.format(" VM Specs - Memory: %sGi, CPU: %s cores", memory, cpu), null);
+        
         String virtualMachineYaml = loadAndRenderTemplate("templates/vm-template.yaml", values);
         @SuppressWarnings("rawtypes")
         Map vmBody = Yaml.loadAs(virtualMachineYaml, Map.class);
 
         log.info("Creating VirtualMachine '{}'...", vmName);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            "Creating VirtualMachine resource in Kubernetes...", null);
 
         try {
             customApi.createNamespacedCustomObject(KUBEVIRT_GROUP, KUBEVIRT_VERSION, namespace, KUBEVIRT_PLURAL_VM, vmBody, null, null, null);
             log.info("VirtualMachine '{}' definition created successfully.", vmName);
+            webSocketHandler.broadcastLogToPod(vmName, "success", 
+                " VirtualMachine '" + vmName + "' definition created successfully", null);
         } catch (ApiException e) {
             log.error("K8s error code: {}", e.getCode());
             log.error("K8s response body: {}", e.getResponseBody());
             log.error("Response headers: {}", e.getResponseHeaders());
+            webSocketHandler.broadcastLogToPod(vmName, "error", 
+                " Failed to create VirtualMachine: " + e.getMessage(), null);
             throw e;
         }
     }
