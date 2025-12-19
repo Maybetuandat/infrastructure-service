@@ -11,6 +11,7 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
+import com.example.infrastructure_service.dto.WebSocketMessage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.RequiredArgsConstructor;
@@ -43,12 +44,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         
         if (podName != null) {
             sessionPodMapping.put(sessionId, podName);
-            log.info("✅ WebSocket connection established for session {} with podName {}", sessionId, podName);
+            log.info(" WebSocket connection established for session {} with podName {}", sessionId, podName);
             
             // Release latch để cho phép Kafka consumer tiếp tục xử lý
             CountDownLatch latch = connectionLatches.remove(podName);
             if (latch != null) {
-                log.info("🔓 Releasing connection latch for podName: {}", podName);
+                log.info("Releasing connection latch for podName: {}", podName);
                 latch.countDown();
             }
             
@@ -56,7 +57,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             sendMessage(session, new WebSocketMessage("connection", 
                 "Connected to pod logs stream for: " + podName, null));
         } else {
-            log.warn("⚠️ WebSocket connection established but no podName found in query");
+            log.warn(" WebSocket connection established but no podName found in query");
         }
     }
 
@@ -66,7 +67,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         String podName = sessionPodMapping.remove(sessionId);
         sessions.remove(sessionId);
         
-        log.info("❌ WebSocket connection closed for session {} (podName: {}). Status: {}", 
+        log.info(" WebSocket connection closed for session {} (podName: {}). Status: {}", 
             sessionId, podName, status);
     }
 
@@ -81,11 +82,11 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
     }
 
     public boolean waitForConnection(String podName, int timeoutSeconds) {
-        log.info("⏳ Waiting for WebSocket connection for podName: {} (timeout: {}s)", podName, timeoutSeconds);
+        log.info(" Waiting for WebSocket connection for podName: {} (timeout: {}s)", podName, timeoutSeconds);
         
         // Kiểm tra xem đã có connection chưa
         if (isConnected(podName)) {
-            log.info("✅ WebSocket already connected for podName: {}", podName);
+            log.info(" WebSocket already connected for podName: {}", podName);
             return true;
         }
         
@@ -97,16 +98,16 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             boolean connected = latch.await(timeoutSeconds, TimeUnit.SECONDS);
             
             if (connected) {
-                log.info("✅ WebSocket connection successful for podName: {}", podName);
+                log.info(" WebSocket connection successful for podName: {}", podName);
             } else {
-                log.warn("⚠️ WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
+                log.warn(" WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
                 connectionLatches.remove(podName);
             }
             
             return connected;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("❌ Interrupted while waiting for WebSocket connection: {}", e.getMessage());
+            log.error(" Interrupted while waiting for WebSocket connection: {}", e.getMessage());
             connectionLatches.remove(podName);
             return false;
         }
@@ -123,7 +124,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
      * Synchronized để tránh concurrent sending
      */
     public void broadcastLogToPod(String podName, String type, String message, Object metadata) {
-        WebSocketMessage wsMessage = new WebSocketMessage(type, message, metadata);
+        WebSocketMessage wsMessage = new  WebSocketMessage(type, message, metadata);
         
         sessionPodMapping.entrySet().stream()
             .filter(entry -> podName.equals(entry.getValue()))
@@ -180,18 +181,5 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         return null;
     }
 
-    /**
-     * Inner class cho WebSocket message structure
-     */
-    public static class WebSocketMessage {
-        public String type;
-        public String message;
-        public Object metadata;
-        
-        public WebSocketMessage(String type, String message, Object metadata) {
-            this.type = type;
-            this.message = message;
-            this.metadata = metadata;
-        }
-    }
+   
 }
