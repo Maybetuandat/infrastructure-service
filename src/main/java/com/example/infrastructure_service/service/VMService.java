@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.FileCopyUtils;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
+import com.example.infrastructure_service.dto.UserLabSessionRequest;
 import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
 
 import java.io.IOException;
@@ -154,6 +155,40 @@ public class VMService {
         }
     }
     
+
+
+    public void createKubernetesResourcesForUserSession(UserLabSessionRequest request) throws IOException, ApiException {
+    String vmName = request.getVmName();
+    String namespace = request.getNamespace();
+    
+    log.info("Starting Kubernetes resource creation for user session VM: {}", vmName);
+    webSocketHandler.broadcastLogToPod(vmName, "info", 
+        "Starting Kubernetes resource creation...", null);
+    
+    ensureNamespaceExists(namespace, vmName);
+    
+    webSocketHandler.broadcastLogToPod(vmName, "info", 
+        "⏳ Creating PersistentVolumeClaim...", null);
+    
+    createPvc(vmName, namespace, 
+        request.getInstanceType().getBackingImage(), 
+        request.getInstanceType().getStorageGb().toString());
+    
+    webSocketHandler.broadcastLogToPod(vmName, "success", 
+        "✅ PVC created successfully", null);
+    
+    webSocketHandler.broadcastLogToPod(vmName, "info", 
+        "⏳ Creating VirtualMachine...", null);
+    
+    createVirtualMachine(vmName, namespace, 
+        request.getInstanceType().getMemoryGb().toString(), 
+        request.getInstanceType().getCpuCores().toString());
+    
+    webSocketHandler.broadcastLogToPod(vmName, "success", 
+        "✅ VirtualMachine created successfully", null);
+    
+    log.info("Kubernetes resources created successfully for user session VM: {}", vmName);
+}
     private String loadAndRenderTemplate(String templatePath, Map<String, String> values) throws IOException {
         ClassPathResource resource = new ClassPathResource(templatePath);
         InputStreamReader reader = new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8);

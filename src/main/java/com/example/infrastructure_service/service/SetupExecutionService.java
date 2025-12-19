@@ -1,6 +1,7 @@
 package com.example.infrastructure_service.service;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
+import com.example.infrastructure_service.dto.UserLabSessionRequest;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.*;
@@ -94,6 +95,65 @@ public class SetupExecutionService {
         } finally {
             if (sshSession != null && sshSession.isConnected()) {
                 sshSession.disconnect();
+            }
+        }
+    }
+    
+    public void executeSetupStepsForUserSession(UserLabSessionRequest request, String podName) throws Exception {
+        log.info("Starting setup steps execution for user lab session: {} via K8s SocketFactory", request.getVmName());
+        
+        JSch jsch = new JSch();
+        Session sshSession = null;
+        
+        try {
+            List<Map<String, Object>> setupSteps = objectMapper.readValue(
+                request.getSetupStepsJson(), 
+                new TypeReference<List<Map<String, Object>>>() {}
+            );
+            
+            if (setupSteps.isEmpty()) {
+                log.info("No setup steps to execute for user session VM {}", request.getVmName());
+                return;
+            }
+            
+            setupSteps = setupSteps.stream()
+                .sorted(Comparator.comparing(step -> (Integer) step.get("stepOrder")))
+                .collect(Collectors.toList());
+            
+            sshSession = connectSshWithRetry(jsch, request.getNamespace(), podName, 20, 5000);
+            
+            log.info("[User Session VM {}] SSH connected via K8s Tunnel. Executing steps...", request.getVmName());
+            
+            for (Map<String, Object> step : setupSteps) {
+                Integer stepOrder = (Integer) step.get("stepOrder");
+                String description = (String) step.get("description");
+                String commandScript = (String) step.get("commandScript");
+                
+                log.info("[User Session VM {}] Executing Step {}: {}", request.getVmName(), stepOrder, description);
+                executionLogger.info("Executing Step {}: {}", stepOrder, description);
+                
+                ExecuteCommandResult result = executeCommandOnSession(sshSession, commandScript, 300);
+                
+                log.info("[User Session VM {}] Step {} completed with exit code: {}", 
+                    request.getVmName(), stepOrder, result.getExitCode());
+                
+                if (result.getExitCode() != 0) {
+                    executionLogger.error("USER_SESSION_VM={}|STEP='{}'|FAILED|Code={}\nOUT: {}",
+                        request.getVmName(), description, result.getExitCode(), result.getStdout());
+                } else {
+                    executionLogger.info("USER_SESSION_VM={}|STEP='{}'|SUCCESS", request.getVmName(), description);
+                }
+            }
+            
+            log.info("[User Session VM {}] All setup steps executed successfully.", request.getVmName());
+            
+        } catch (Exception e) {
+            log.error("Setup failed for user session VM {}: {}", request.getVmName(), e.getMessage(), e);
+            throw e;
+        } finally {
+            if (sshSession != null && sshSession.isConnected()) {
+                sshSession.disconnect();
+                log.info("[User Session VM {}] SSH session disconnected.", request.getVmName());
             }
         }
     }

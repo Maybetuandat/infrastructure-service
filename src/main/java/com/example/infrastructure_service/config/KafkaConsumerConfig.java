@@ -13,6 +13,7 @@ import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
+import com.example.infrastructure_service.dto.UserLabSessionRequest;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -24,33 +25,48 @@ public class KafkaConsumerConfig {
     @Value("${spring.kafka.bootstrap-servers:localhost:9092}")
     private String bootstrapServers;
 
-    private String groupId="infrastructure-service";
-   @Bean
-    public ConsumerFactory<String, LabTestRequest> consumerFactory() {
+    private String groupId = "infrastructure-service";
+
+    private Map<String, Object> getCommonConsumerProps() {
         Map<String, Object> props = new HashMap<>();
         props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
         props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
-        
-        // Sử dụng ErrorHandlingDeserializer
         props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
         props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, ErrorHandlingDeserializer.class);
-        
-        // Delegate deserializers
         props.put(ErrorHandlingDeserializer.KEY_DESERIALIZER_CLASS, StringDeserializer.class);
         props.put(ErrorHandlingDeserializer.VALUE_DESERIALIZER_CLASS, JsonDeserializer.class);
-        
-        // JsonDeserializer config
         props.put(JsonDeserializer.TRUSTED_PACKAGES, "*");
-        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, LabTestRequest.class.getName());
         props.put(JsonDeserializer.USE_TYPE_INFO_HEADERS, false);
-        
+        return props;
+    }
+
+    @Bean
+    public ConsumerFactory<String, LabTestRequest> labTestConsumerFactory() {
+        Map<String, Object> props = getCommonConsumerProps();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, LabTestRequest.class.getName());
         return new DefaultKafkaConsumerFactory<>(props);
     }
 
     @Bean
     public ConcurrentKafkaListenerContainerFactory<String, LabTestRequest> kafkaListenerContainerFactory() {
-        ConcurrentKafkaListenerContainerFactory<String, LabTestRequest> factory = new ConcurrentKafkaListenerContainerFactory<>();
-        factory.setConsumerFactory(consumerFactory());
+        ConcurrentKafkaListenerContainerFactory<String, LabTestRequest> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(labTestConsumerFactory());
+        return factory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, UserLabSessionRequest> userLabSessionConsumerFactory() {
+        Map<String, Object> props = getCommonConsumerProps();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, UserLabSessionRequest.class.getName());
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, UserLabSessionRequest> userLabSessionKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, UserLabSessionRequest> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(userLabSessionConsumerFactory());
         return factory;
     }
 }
