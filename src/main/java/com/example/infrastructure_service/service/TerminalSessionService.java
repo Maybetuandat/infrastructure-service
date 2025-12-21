@@ -11,26 +11,20 @@ import java.util.concurrent.ConcurrentHashMap;
 @Slf4j
 public class TerminalSessionService {
 
-    // Cache mapping labSessionId -> {vmName, namespace}
     private final Map<Integer, Map<String, String>> sessionCache = new ConcurrentHashMap<>();
 
-    /**
-     * Register terminal session after VM is created and ready
-     */
-    public void registerSession(Integer labSessionId, String vmName, String namespace) {
+    public void registerSession(Integer labSessionId, String vmName, String namespace, String podName) {
         Map<String, String> sessionInfo = new HashMap<>();
         sessionInfo.put("vmName", vmName);
         sessionInfo.put("namespace", namespace);
+        sessionInfo.put("podName", podName);
         
         sessionCache.put(labSessionId, sessionInfo);
         
-        log.info("✅ Terminal session registered: labSessionId={} -> VM={}, namespace={}", 
-            labSessionId, vmName, namespace);
+        log.info("✅ Terminal session registered: labSessionId={} -> VM={}, namespace={}, pod={}", 
+            labSessionId, vmName, namespace, podName);
     }
 
-    /**
-     * Get terminal session info
-     */
     public Map<String, String> getSession(Integer labSessionId) {
         Map<String, String> sessionInfo = sessionCache.get(labSessionId);
         
@@ -41,9 +35,6 @@ public class TerminalSessionService {
         return sessionInfo;
     }
 
-    /**
-     * Remove terminal session (cleanup after disconnect)
-     */
     public void removeSession(Integer labSessionId) {
         Map<String, String> removed = sessionCache.remove(labSessionId);
         
@@ -53,9 +44,6 @@ public class TerminalSessionService {
         }
     }
 
-    /**
-     * Check if terminal session exists
-     */
     public boolean exists(Integer labSessionId) {
         return sessionCache.containsKey(labSessionId);
     }

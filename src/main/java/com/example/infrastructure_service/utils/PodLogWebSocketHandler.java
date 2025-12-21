@@ -53,19 +53,11 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         
         log.info("🔌 WebSocket connection closed for session {} (podName: {}). Status: {}", 
             session.getId(), podName, status);
-
-        String sessionId = session.getId();
-        AtomicBoolean isActive = activeConnections.remove(sessionId);
-        if (isActive != null) {
-            isActive.set(false);
-        }
-
+        
+        activeConnections.remove(session.getId());
         if (podName != null) {
-            WebSocketSession existingSession = podSessions.get(podName);
-            if (existingSession != null && existingSession.getId().equals(session.getId())) {
-                podSessions.remove(podName);
-                log.info("🗑️ Removed session for podName: {}", podName);
-            }
+            podSessions.remove(podName);
+            log.info("🗑️ Removed session for podName: {}", podName);
         }
     }
 
@@ -73,40 +65,60 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
-        if (exception.getMessage() != null && 
-            (exception.getMessage().contains("Connection reset") ||
-             exception.getMessage().contains("Broken pipe") ||
-             exception.getMessage().contains("Session closed"))) {
-            log.debug("🔌 Transport error (normal close) for session {}: {}", 
-                session.getId(), exception.getMessage());
-        } else {
-            log.error("🚨 Transport error for session {} (podName: {}): {}", 
-                session.getId(), podName, exception.getMessage());
-        }
-
-        String sessionId = session.getId();
-        AtomicBoolean isActive = activeConnections.remove(sessionId);
-        if (isActive != null) {
-            isActive.set(false);
-        }
-
+        log.error("❌ WebSocket transport error for session {} (podName: {}): {}", 
+            session.getId(), podName, exception.getMessage());
+        
+        activeConnections.remove(session.getId());
         if (podName != null) {
             podSessions.remove(podName);
         }
+        
+        try {
+            if (session.isOpen()) {
+                session.close(CloseStatus.SERVER_ERROR);
+            }
+        } catch (Exception e) {
+            log.debug("Error closing session after transport error: {}", e.getMessage());
+        }
+    }
+
+    @Override
+    protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
+        String podName = extractPodNameFromQuery(session.getUri().getQuery());
+        
+        if (podName == null) {
+            log.debug("No podName for session {}", session.getId());
+            return;
+        }
+        
+        // Forward terminal input to SSH session
+        // This will be handled by TerminalSessionService
+        log.debug("Received terminal input from client for pod {}: {}", podName, message.getPayload());
+        
+        // TODO: Forward to SSH session based on podName
     }
 
     public boolean waitForConnection(String podName, int timeoutSeconds) {
+        if (hasActiveSessionsForPod(podName)) {
+            log.info("✅ WebSocket already connected for pod: {}", podName);
+            return true;
+        }
+        
+        log.info("⏳ Waiting for WebSocket connection for pod: {} (timeout: {}s)", podName, timeoutSeconds);
+        
         CountDownLatch latch = new CountDownLatch(1);
         connectionLatches.put(podName, latch);
         
         try {
             boolean connected = latch.await(timeoutSeconds, TimeUnit.SECONDS);
+            
             if (connected) {
                 log.info("✅ WebSocket client connected for podName: {} within {}s", podName, timeoutSeconds);
+                return true;
             } else {
                 log.warn("⏰ WebSocket connection timeout for podName: {} after {}s", podName, timeoutSeconds);
+                return false;
             }
-            return connected;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             log.error("❌ Interrupted while waiting for WebSocket connection for podName: {}", podName);
@@ -114,6 +126,16 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         } finally {
             connectionLatches.remove(podName);
         }
+    }
+
+    private boolean hasActiveSessionsForPod(String podName) {
+        WebSocketSession session = podSessions.get(podName);
+        if (session == null) {
+            return false;
+        }
+        
+        AtomicBoolean isActive = activeConnections.get(session.getId());
+        return session.isOpen() && isActive != null && isActive.get();
     }
 
     public void broadcastLogToPod(String podName, String type, String message, Map<String, Object> data) {
@@ -134,48 +156,27 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
 
         if (!session.isOpen()) {
             log.debug("⚠️ WebSocket session {} is closed for podName: {}", sessionId, podName);
-            activeConnections.remove(sessionId);
             podSessions.remove(podName);
+            activeConnections.remove(sessionId);
             return;
         }
 
-        WebSocketMessage wsMessage = new WebSocketMessage(type, message, data);
-        sendMessageSafely(session, wsMessage);
-    }
-
-    private synchronized void sendMessageSafely(WebSocketSession session, WebSocketMessage message) {
         try {
-            String sessionId = session.getId();
-            AtomicBoolean isActive = activeConnections.get(sessionId);
+            Map<String, Object> payload = Map.of(
+                "type", type,
+                "message", message,
+                "data", data != null ? data : Map.of(),
+                "timestamp", System.currentTimeMillis()
+            );
             
-            if (isActive == null || !isActive.get() || !session.isOpen()) {
-                log.debug("⚠️ Skipping message send - session {} is closed or inactive", sessionId);
-                return;
-            }
-
-            String json = objectMapper.writeValueAsString(message);
+            String json = objectMapper.writeValueAsString(payload);
+            session.sendMessage(new TextMessage(json));
             
-            synchronized (session) {
-                if (session.isOpen()) {
-                    session.sendMessage(new TextMessage(json));
-                }
-            }
+            log.debug("📤 Sent WebSocket message to {} (type: {})", podName, type);
         } catch (IOException e) {
-            if (e.getMessage() != null && 
-                (e.getMessage().contains("Session closed") ||
-                 e.getMessage().contains("Connection reset") ||
-                 e.getMessage().contains("Broken pipe"))) {
-                log.debug("Session closed during message send: {}", e.getMessage());
-            } else {
-                log.error("Failed to send WebSocket message to session {}: {}", 
-                    session.getId(), e.getMessage());
-            }
-            
-            String sessionId = session.getId();
-            AtomicBoolean isActive = activeConnections.remove(sessionId);
-            if (isActive != null) {
-                isActive.set(false);
-            }
+            log.error("❌ Failed to send WebSocket message to podName {}: {}", podName, e.getMessage());
+            podSessions.remove(podName);
+            activeConnections.remove(sessionId);
         }
     }
 
@@ -184,37 +185,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             return null;
         }
         
-        String[] params = query.split("&");
-        for (String param : params) {
+        for (String param : query.split("&")) {
             String[] keyValue = param.split("=");
             if (keyValue.length == 2 && "podName".equals(keyValue[0])) {
                 return keyValue[1];
             }
         }
-        
         return null;
-    }
-
-    public static class WebSocketMessage {
-        private String type;
-        private String message;
-        private Map<String, Object> data;
-
-        public WebSocketMessage() {}
-
-        public WebSocketMessage(String type, String message, Map<String, Object> data) {
-            this.type = type;
-            this.message = message;
-            this.data = data;
-        }
-
-        public String getType() { return type; }
-        public void setType(String type) { this.type = type; }
-        
-        public String getMessage() { return message; }
-        public void setMessage(String message) { this.message = message; }
-        
-        public Map<String, Object> getData() { return data; }
-        public void setData(Map<String, Object> data) { this.data = data; }
     }
 }
