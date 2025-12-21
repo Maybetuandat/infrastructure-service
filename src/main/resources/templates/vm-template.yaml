@@ -25,7 +25,7 @@ spec:
                   groups: [adm, sudo]
                   shell: /bin/bash
                   sudo: ['ALL=(ALL) NOPASSWD:ALL']
-                  plain_text_passwd: '1234'
+                  plain_text_passwd: 'ubuntu'
                   lock_passwd: false
       domain:
         resources:
