@@ -88,9 +88,9 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         activeConnections.remove(session.getId());
         
         if (podName != null) {
-            cleanupTerminalResources(podName);
+            //cleanupTerminalResources(podName);
             podSessions.remove(podName);
-            terminalModeEnabled.remove(podName);
+           // terminalModeEnabled.remove(podName);
             log.info("🗑️ Removed session for podName: {}", podName);
         }
     }
