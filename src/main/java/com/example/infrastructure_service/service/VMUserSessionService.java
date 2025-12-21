@@ -193,9 +193,12 @@ public class VMUserSessionService {
         webSocketHandler.broadcastLogToPod(vmName, "error", message, null);
     }
     
+   
     private void broadcastTerminalReady(String vmName, int labSessionId) {
-        webSocketHandler.broadcastLogToPod(vmName, "terminal_ready", 
-            "🎉 Terminal is ready! Switching to interactive mode...", 
-            Map.of("labSessionId", labSessionId, "percentage", 100));
+    webSocketHandler.broadcastLogToPod(vmName, "terminal_ready", 
+        "🎉 Terminal is ready! You can now type commands...", 
+        Map.of("labSessionId", labSessionId, "percentage", 100));
+    webSocketHandler.enableTerminalMode(vmName, labSessionId);
+
     }
 }

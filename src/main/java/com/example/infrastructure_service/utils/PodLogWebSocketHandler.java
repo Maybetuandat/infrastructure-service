@@ -1,6 +1,12 @@
+// infrastructure-service/src/main/java/com/example/infrastructure_service/utils/PodLogWebSocketHandler.java
 package com.example.infrastructure_service.utils;
 
+import com.example.infrastructure_service.service.SshSessionCache;
+import com.example.infrastructure_service.service.TerminalSessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jcraft.jsch.ChannelShell;
+import com.jcraft.jsch.Session;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
@@ -9,6 +15,8 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -17,14 +25,24 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class PodLogWebSocketHandler extends TextWebSocketHandler {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+    private final SshSessionCache sshSessionCache;
+    private final TerminalSessionService terminalSessionService;
+    
     private final Map<String, WebSocketSession> podSessions = new ConcurrentHashMap<>();
     private final Map<String, CountDownLatch> connectionLatches = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> activeConnections = new ConcurrentHashMap<>();
+    private final Map<String, Boolean> terminalModeEnabled = new ConcurrentHashMap<>();
+    
+    // Terminal SSH resources
+    private final Map<String, ChannelShell> sshChannels = new ConcurrentHashMap<>();
+    private final Map<String, Thread> outputReaders = new ConcurrentHashMap<>();
+    private final Map<String, OutputStream> sshOutputStreams = new ConcurrentHashMap<>();
 
-    @Override
+   @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
@@ -40,10 +58,23 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         activeConnections.put(session.getId(), new AtomicBoolean(true));
         podSessions.put(podName, session);
         
+        // Check if terminal mode is already enabled for this pod
+        Boolean isTerminalMode = terminalModeEnabled.get(podName);
+        if (isTerminalMode == null) {
+            terminalModeEnabled.put(podName, false);
+        }
+        
         CountDownLatch latch = connectionLatches.get(podName);
         if (latch != null) {
             latch.countDown();
             log.info("✅ WebSocket connection latch released for podName: {}", podName);
+        }
+        
+        // ✅ Send terminal_ready if terminal is already set up
+        if (Boolean.TRUE.equals(isTerminalMode)) {
+            log.info("🎉 Sending terminal_ready message for reconnected client: {}", podName);
+            broadcastLogToPod(podName, "terminal_ready", 
+                "Terminal is ready. You can now type commands.", null);
         }
     }
 
@@ -55,8 +86,11 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             session.getId(), podName, status);
         
         activeConnections.remove(session.getId());
+        
         if (podName != null) {
+            cleanupTerminalResources(podName);
             podSessions.remove(podName);
+            terminalModeEnabled.remove(podName);
             log.info("🗑️ Removed session for podName: {}", podName);
         }
     }
@@ -69,8 +103,11 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             session.getId(), podName, exception.getMessage());
         
         activeConnections.remove(session.getId());
+        
         if (podName != null) {
+            cleanupTerminalResources(podName);
             podSessions.remove(podName);
+            terminalModeEnabled.remove(podName);
         }
         
         try {
@@ -91,11 +128,104 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         
-        // Forward terminal input to SSH session
-        // This will be handled by TerminalSessionService
-        log.debug("Received terminal input from client for pod {}: {}", podName, message.getPayload());
+        Boolean isTerminalMode = terminalModeEnabled.get(podName);
+        if (Boolean.TRUE.equals(isTerminalMode)) {
+            log.debug("📨 Terminal input from client for pod {}: {}", podName, message.getPayload());
+            forwardToTerminal(podName, message.getPayload());
+        }
+    }
+
+    public void enableTerminalMode(String podName, int labSessionId) {
+        terminalModeEnabled.put(podName, true);
+        log.info("🔄 Terminal mode ENABLED for podName: {}", podName);
         
-        // TODO: Forward to SSH session based on podName
+        // Open SSH channel for terminal I/O
+        try {
+            setupTerminalChannel(podName, labSessionId);
+        } catch (Exception e) {
+            log.error("❌ Failed to setup terminal channel for {}: {}", podName, e.getMessage());
+        }
+    }
+
+    private void setupTerminalChannel(String podName, int labSessionId) throws Exception {
+        String cacheKey = "lab-session-" + labSessionId;
+        Session sshSession = sshSessionCache.get(cacheKey);
+        
+        if (sshSession == null || !sshSession.isConnected()) {
+            log.error("❌ No cached SSH session found for labSessionId: {}", labSessionId);
+            return;
+        }
+
+        log.info("🔧 Setting up terminal channel for podName: {}", podName);
+        
+        ChannelShell channel = (ChannelShell) sshSession.openChannel("shell");
+        channel.setPtyType("xterm");
+        channel.setPtySize(80, 24, 640, 480);
+        channel.connect();
+
+        sshChannels.put(podName, channel);
+
+        InputStream in = channel.getInputStream();
+        OutputStream out = channel.getOutputStream();
+        sshOutputStreams.put(podName, out);
+
+        // Start reading SSH output → send to WebSocket
+        Thread reader = new Thread(() -> {
+            try {
+                byte[] buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = in.read(buffer)) != -1) {
+                    String output = new String(buffer, 0, bytesRead);
+                    sendTerminalOutput(podName, output);
+                }
+            } catch (IOException e) {
+                log.debug("Terminal output reader stopped for {}: {}", podName, e.getMessage());
+            }
+        });
+        reader.start();
+        outputReaders.put(podName, reader);
+
+        log.info("✅ Terminal channel ready for podName: {}", podName);
+    }
+
+    private void forwardToTerminal(String podName, String input) {
+        OutputStream out = sshOutputStreams.get(podName);
+        
+        if (out == null) {
+            log.warn("⚠️ No SSH output stream for podName: {}", podName);
+            return;
+        }
+        
+        try {
+            out.write(input.getBytes());
+            out.flush();
+            log.debug("📤 Forwarded input to SSH: {}", input);
+        } catch (IOException e) {
+            log.error("❌ Failed to forward input to SSH: {}", e.getMessage());
+        }
+    }
+
+    private void cleanupTerminalResources(String podName) {
+        log.info("🧹 Cleaning up terminal resources for podName: {}", podName);
+        
+        Thread reader = outputReaders.remove(podName);
+        if (reader != null && reader.isAlive()) {
+            reader.interrupt();
+        }
+        
+        OutputStream out = sshOutputStreams.remove(podName);
+        if (out != null) {
+            try {
+                out.close();
+            } catch (IOException e) {
+                log.debug("Error closing SSH output stream: {}", e.getMessage());
+            }
+        }
+        
+        ChannelShell channel = sshChannels.remove(podName);
+        if (channel != null && channel.isConnected()) {
+            channel.disconnect();
+        }
     }
 
     public boolean waitForConnection(String podName, int timeoutSeconds) {
@@ -177,6 +307,22 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             log.error("❌ Failed to send WebSocket message to podName {}: {}", podName, e.getMessage());
             podSessions.remove(podName);
             activeConnections.remove(sessionId);
+        }
+    }
+
+    public void sendTerminalOutput(String podName, String output) {
+        WebSocketSession session = podSessions.get(podName);
+        
+        if (session == null || !session.isOpen()) {
+            log.debug("⚠️ No active session for podName: {}", podName);
+            return;
+        }
+
+        try {
+            session.sendMessage(new TextMessage(output));
+            log.debug("📤 Sent terminal output to {}", podName);
+        } catch (IOException e) {
+            log.error("❌ Failed to send terminal output: {}", e.getMessage());
         }
     }
 

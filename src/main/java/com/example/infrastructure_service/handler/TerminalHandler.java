@@ -1,9 +1,9 @@
+// infrastructure-service/src/main/java/com/example/infrastructure_service/handler/TerminalHandler.java
 package com.example.infrastructure_service.handler;
 
 import com.example.infrastructure_service.service.TerminalSessionService;
 import com.example.infrastructure_service.service.SetupExecutionService.K8sTunnelSocketFactory;
 import com.example.infrastructure_service.service.SshSessionCache;
-import com.jcraft.jsch.Channel;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
@@ -41,7 +41,6 @@ public class TerminalHandler extends TextWebSocketHandler {
     @Value("${ssh.default.password:1234}")
     private String defaultPassword;
 
-    private final Map<String, Session> sshSessions = new ConcurrentHashMap<>();
     private final Map<String, ChannelShell> sshChannels = new ConcurrentHashMap<>();
     private final Map<String, Thread> outputReaders = new ConcurrentHashMap<>();
 
@@ -69,17 +68,13 @@ public class TerminalHandler extends TextWebSocketHandler {
         String podName = sessionInfo.get("podName");
 
         try {
-            JSch jsch = new JSch();
-            
-            // Try to get cached session first
             String cacheKey = "lab-session-" + labSessionId;
             Session sshSession = sshSessionCache.get(cacheKey);
             
-            if (sshSession != null && sshSession.isConnected()) {
-                log.info("✅ Using cached SSH session for labSessionId: {}", labSessionId);
-            } else {
-                log.info("⚠️ No cached session found, creating new SSH connection for labSessionId: {}", labSessionId);
+            if (sshSession == null || !sshSession.isConnected()) {
+                log.warn("⚠️ No cached SSH session found for labSessionId: {}, creating new connection", labSessionId);
                 
+                JSch jsch = new JSch();
                 sshSession = jsch.getSession(defaultUsername, vmName, 22);
                 sshSession.setPassword(defaultPassword);
                 sshSession.setConfig("StrictHostKeyChecking", "no");
@@ -88,6 +83,10 @@ public class TerminalHandler extends TextWebSocketHandler {
                 sshSession.setSocketFactory(socketFactory);
                 sshSession.setTimeout(30000);
                 sshSession.connect(30000);
+                
+                sshSessionCache.put(cacheKey, sshSession);
+            } else {
+                log.info("✅ Reusing cached SSH session for labSessionId: {}", labSessionId);
             }
 
             ChannelShell channel = (ChannelShell) sshSession.openChannel("shell");
@@ -95,7 +94,6 @@ public class TerminalHandler extends TextWebSocketHandler {
             channel.setPtySize(80, 24, 640, 480);
             channel.connect();
 
-            sshSessions.put(session.getId(), sshSession);
             sshChannels.put(session.getId(), channel);
 
             InputStream in = channel.getInputStream();
@@ -121,7 +119,7 @@ public class TerminalHandler extends TextWebSocketHandler {
             log.info("✅ SSH terminal session established for labSessionId: {}", labSessionId);
 
         } catch (Exception e) {
-            log.error("❌ Failed to establish SSH session: {}", e.getMessage());
+            log.error("❌ Failed to establish SSH session: {}", e.getMessage(), e);
             session.close(CloseStatus.SERVER_ERROR);
         }
     }
@@ -147,11 +145,6 @@ public class TerminalHandler extends TextWebSocketHandler {
         ChannelShell channel = sshChannels.remove(session.getId());
         if (channel != null && channel.isConnected()) {
             channel.disconnect();
-        }
-
-        Session sshSession = sshSessions.remove(session.getId());
-        if (sshSession != null && sshSession.isConnected()) {
-            sshSession.disconnect();
         }
     }
 
