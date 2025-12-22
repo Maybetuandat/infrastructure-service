@@ -1,9 +1,10 @@
+// infrastructure-service/src/main/java/com/example/infrastructure_service/service/VMTestService.java
 package com.example.infrastructure_service.service;
 
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import com.example.infrastructure_service.dto.LabTestRequest;
-import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
+import com.example.infrastructure_service.handler.AdminTestWebSocketHandler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -15,7 +16,7 @@ public class VMTestService {
     private final VMService vmService;
     private final KubernetesDiscoveryService discoveryService;
     private final SetupExecutionService setupExecutionService;
-    private final PodLogWebSocketHandler webSocketHandler;
+    private final AdminTestWebSocketHandler adminTestHandler;
     
     private static final int WEBSOCKET_TIMEOUT_SECONDS = 30;
     
@@ -31,69 +32,69 @@ public class VMTestService {
             log.info("Test VM Name: {}", vmName);
             log.info("========================================");
             
-            // ✅ STEP 0: Đợi WebSocket connection trước khi bắt đầu tạo VM
+            // STEP 0: Wait for WebSocket connection
             log.info("⏳ Step 0: Waiting for WebSocket client to connect...");
             
-            boolean wsConnected = webSocketHandler.waitForConnection(vmName, WEBSOCKET_TIMEOUT_SECONDS);
+            boolean wsConnected = adminTestHandler.waitForConnection(vmName, WEBSOCKET_TIMEOUT_SECONDS);
             
             if (!wsConnected) {
                 log.warn("⚠️ WebSocket connection timeout after {}s. Proceeding anyway (graceful degradation).", 
                     WEBSOCKET_TIMEOUT_SECONDS);
-                webSocketHandler.broadcastLogToPod(vmName, "warning", 
+                adminTestHandler.broadcastLog(vmName, "warning", 
                     "⚠️ WebSocket connection timeout. Logs may be incomplete.", null);
             } else {
                 log.info("✅ WebSocket client connected successfully!");
-                webSocketHandler.broadcastLogToPod(vmName, "connection", 
+                adminTestHandler.broadcastLog(vmName, "connection", 
                     "🔗 WebSocket connected. Starting test VM creation...", null);
             }
             
-            // Small delay để client có thể render UI
+            // Small delay for UI render
             try {
                 Thread.sleep(500);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
             
-            // ✅ STEP 1: Create VM resources
+            // STEP 1: Create VM resources
             log.info("📦 Step 1: Creating VM resources...");
-            webSocketHandler.broadcastLogToPod(vmName, "info", 
+            adminTestHandler.broadcastLog(vmName, "info", 
                 "📦 Creating VM resources...", null);
             
             vmService.createKubernetesResourcesForTest(request);
             
-            webSocketHandler.broadcastLogToPod(vmName, "success", 
+            adminTestHandler.broadcastLog(vmName, "success", 
                 "✅ VM resources created successfully", null);
             
-            // ✅ STEP 2: Wait for VM to be ready
+            // STEP 2: Wait for VM to be ready
             log.info("⏳ Step 2: Waiting for VM to be ready...");
-            webSocketHandler.broadcastLogToPod(vmName, "info", 
+            adminTestHandler.broadcastLog(vmName, "info", 
                 "⏳ Waiting for VM pod to be ready...", null);
             
             var pod = discoveryService.waitForPodRunning(vmName, namespace, 1200);
             String podName = pod.getMetadata().getName();
             
             log.info("✅ Step 3: VM Pod is running: {}", podName);
-            webSocketHandler.broadcastLogToPod(vmName, "success", 
+            adminTestHandler.broadcastLog(vmName, "success", 
                 "✅ Test VM is now running: " + podName, null);
             
-            // ✅ STEP 3: Execute setup steps (nếu có)
+            // STEP 3: Execute setup steps (if any)
             if (request.getSetupStepsJson() != null && !request.getSetupStepsJson().isEmpty()) {
                 log.info("⚙️ Step 4: Executing setup steps...");
                 
-                webSocketHandler.broadcastLogToPod(vmName, "info", 
+                adminTestHandler.broadcastLog(vmName, "info", 
                     "⚙️ Starting setup steps execution...", null);
                 
                 setupExecutionService.executeSetupStepsForTest(request, podName);
                 
-                webSocketHandler.broadcastLogToPod(vmName, "success", 
+                adminTestHandler.broadcastLog(vmName, "success", 
                     "✅ Setup completed successfully!", null);
             } else {
                 log.info("ℹ️ No setup steps required");
-                webSocketHandler.broadcastLogToPod(vmName, "info", 
+                adminTestHandler.broadcastLog(vmName, "info", 
                     "ℹ️ No setup steps required. Lab is ready!", null);
             }
             
-            webSocketHandler.broadcastLogToPod(vmName, "success", 
+            adminTestHandler.broadcastLog(vmName, "success", 
                 "✅ Lab test environment is ready!", null);
             
             log.info("========================================");
@@ -104,7 +105,7 @@ public class VMTestService {
             
         } catch (Exception e) {
             log.error("❌ Error during lab test: {}", e.getMessage(), e);
-            webSocketHandler.broadcastLogToPod(vmName, "error", 
+            adminTestHandler.broadcastLog(vmName, "error", 
                 "❌ Failed to create test VM: " + e.getMessage(), null);
         }
     }

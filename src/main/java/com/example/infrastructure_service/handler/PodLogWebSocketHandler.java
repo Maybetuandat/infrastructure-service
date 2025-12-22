@@ -1,5 +1,5 @@
 // infrastructure-service/src/main/java/com/example/infrastructure_service/utils/PodLogWebSocketHandler.java
-package com.example.infrastructure_service.utils;
+package com.example.infrastructure_service.handler;
 
 import com.example.infrastructure_service.service.SshSessionCache;
 import com.example.infrastructure_service.service.TerminalSessionService;

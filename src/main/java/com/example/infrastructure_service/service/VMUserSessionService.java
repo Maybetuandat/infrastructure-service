@@ -5,7 +5,7 @@ import java.util.Map;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
-import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
+import com.example.infrastructure_service.handler.PodLogWebSocketHandler;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import com.example.infrastructure_service.service.SetupExecutionService.K8sTunnelSocketFactory;

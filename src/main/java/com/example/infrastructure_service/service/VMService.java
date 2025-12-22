@@ -16,7 +16,7 @@ import org.springframework.util.FileCopyUtils;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
-import com.example.infrastructure_service.utils.PodLogWebSocketHandler;
+import com.example.infrastructure_service.handler.PodLogWebSocketHandler;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
