@@ -16,6 +16,8 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 
+
+// nếu ngoài cụm, cần có file config. nếu trong cụm, tự động lấy service account 
 @Configuration
 @Slf4j
 public class KubernetesClientConfig {

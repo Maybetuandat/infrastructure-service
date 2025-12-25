@@ -31,13 +31,8 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        // Admin test WebSocket - for testing lab setup from admin panel
         registry.addHandler(adminTestHandler, "/ws/admin/test-lab")
                 .setAllowedOrigins("*");
-        
-        // Student lab WebSocket - unified handler for both phases:
-        // Phase 1: VM setup progress (logs only)
-        // Phase 2: Interactive terminal (after terminal_ready)
         registry.addHandler(podLogHandler, "/ws/pod-logs")
                 .addInterceptors(new StudentLabSessionInterceptor(terminalSessionService))
                 .setAllowedOrigins("*");
@@ -70,11 +65,11 @@ public class WebSocketConfig implements WebSocketConfigurer {
                 
                 attributes.put("token", token);
                 
-                log.info("✅ Student lab WebSocket handshake successful");
+                log.info("Student lab WebSocket handshake successful");
                 return true;
             }
             
-            log.error("❌ Invalid request type");
+            log.error("Invalid request type");
             return false;
         }
 
@@ -82,7 +77,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                    WebSocketHandler wsHandler, Exception exception) {
             if (exception != null) {
-                log.error("❌ Student lab WebSocket handshake failed", exception);
+                log.error("Student lab WebSocket handshake failed", exception);
             }
         }
     }
