@@ -17,7 +17,7 @@ public class TerminalSession {
     private LocalDateTime createdAt;
     private LocalDateTime lastActivityAt;
     
-    // SSH resources
+    
     private ChannelShell sshChannel;
     private OutputStream sshOutputStream;
     private Thread outputReader;
