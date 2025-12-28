@@ -1,5 +1,6 @@
 package com.example.infrastructure_service.config;
 
+import com.example.infrastructure_service.dto.ValidationRequest;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,6 +68,21 @@ public class KafkaConsumerConfig {
         ConcurrentKafkaListenerContainerFactory<String, UserLabSessionRequest> factory = 
             new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(userLabSessionConsumerFactory());
+        return factory;
+    }
+    
+    @Bean
+    public ConsumerFactory<String, ValidationRequest> validationConsumerFactory() {
+        Map<String, Object> props = getCommonConsumerProps();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, ValidationRequest.class.getName());
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, ValidationRequest> validationKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, ValidationRequest> factory = 
+            new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(validationConsumerFactory());
         return factory;
     }
 }

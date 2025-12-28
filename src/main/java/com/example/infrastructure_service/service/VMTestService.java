@@ -1,4 +1,3 @@
-// infrastructure-service/src/main/java/com/example/infrastructure_service/service/VMTestService.java
 package com.example.infrastructure_service.service;
 
 import org.springframework.scheduling.annotation.Async;
