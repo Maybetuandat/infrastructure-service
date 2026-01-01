@@ -34,15 +34,10 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(adminTestHandler, "/ws/admin/test-lab")
                 .setAllowedOrigins("*");
         registry.addHandler(podLogHandler, "/ws/pod-logs")
-                .addInterceptors(new StudentLabSessionInterceptor(terminalSessionService))
+                .addInterceptors(new StudentLabSessionInterceptor())
                 .setAllowedOrigins("*");
     }
-
-    @RequiredArgsConstructor
     private static class StudentLabSessionInterceptor implements HandshakeInterceptor {
-        
-        private final TerminalSessionService terminalSessionService;
-
         @Override
         public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
                                        WebSocketHandler wsHandler, Map<String, Object> attributes) throws Exception {

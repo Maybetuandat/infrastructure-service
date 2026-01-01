@@ -26,28 +26,27 @@ public class VMTestService {
         
         try {
             log.info("========================================");
-            log.info("🚀 STARTING LAB TEST WITH WEBSOCKET WAIT");
+            log.info(" STARTING LAB TEST WITH WEBSOCKET WAIT");
             log.info("Lab ID: {}", request.getLabId());
             log.info("Test VM Name: {}", vmName);
             log.info("========================================");
             
-            // STEP 0: Wait for WebSocket connection
-            log.info("⏳ Step 0: Waiting for WebSocket client to connect...");
+            log.info(" Step 0: Waiting for WebSocket client to connect...");
             
             boolean wsConnected = adminTestHandler.waitForConnection(vmName, WEBSOCKET_TIMEOUT_SECONDS);
             
             if (!wsConnected) {
-                log.warn("⚠️ WebSocket connection timeout after {}s. Proceeding anyway (graceful degradation).", 
+                log.warn(" WebSocket connection timeout after {}s. Proceeding anyway (graceful degradation).", 
                     WEBSOCKET_TIMEOUT_SECONDS);
                 adminTestHandler.broadcastLog(vmName, "warning", 
-                    "⚠️ WebSocket connection timeout. Logs may be incomplete.", null);
+                    "WebSocket connection timeout. Logs may be incomplete.", null);
             } else {
-                log.info("✅ WebSocket client connected successfully!");
+                log.info(" WebSocket client connected successfully!");
                 adminTestHandler.broadcastLog(vmName, "connection", 
-                    "🔗 WebSocket connected. Starting test VM creation...", null);
+                    "WebSocket connected. Starting test VM creation...", null);
             }
             
-            // Small delay for UI render
+            // Small delay to ensure readiness
             try {
                 Thread.sleep(500);
             } catch (InterruptedException e) {
@@ -55,57 +54,52 @@ public class VMTestService {
             }
             
             // STEP 1: Create VM resources
-            log.info("📦 Step 1: Creating VM resources...");
+            log.info(" Step 1: Creating VM resources...");
             adminTestHandler.broadcastLog(vmName, "info", 
-                "📦 Creating VM resources...", null);
+                " Creating VM resources...", null);
             
             vmService.createKubernetesResourcesForTest(request);
             
             adminTestHandler.broadcastLog(vmName, "success", 
-                "✅ VM resources created successfully", null);
+                " VM resources created successfully", null);
             
             // STEP 2: Wait for VM to be ready
-            log.info("⏳ Step 2: Waiting for VM to be ready...");
+            log.info(" Step 2: Waiting for VM to be ready...");
             adminTestHandler.broadcastLog(vmName, "info", 
-                "⏳ Waiting for VM pod to be ready...", null);
+                " Waiting for VM pod to be ready...", null);
             
             var pod = discoveryService.waitForPodRunning(vmName, namespace, 1200);
             String podName = pod.getMetadata().getName();
             
-            log.info("✅ Step 3: VM Pod is running: {}", podName);
+            log.info(" Step 3: VM Pod is running: {}", podName);
             adminTestHandler.broadcastLog(vmName, "success", 
-                "✅ Test VM is now running: " + podName, null);
+                " Test VM is now running: " + podName, null);
             
             // STEP 3: Execute setup steps (if any)
             if (request.getSetupStepsJson() != null && !request.getSetupStepsJson().isEmpty()) {
-                log.info("⚙️ Step 4: Executing setup steps...");
-                
-                adminTestHandler.broadcastLog(vmName, "info", 
-                    "⚙️ Starting setup steps execution...", null);
-                
+                log.info(" Step 4: Executing setup steps...");        
                 setupExecutionService.executeSetupStepsForTest(request, podName);
-                
                 adminTestHandler.broadcastLog(vmName, "success", 
-                    "✅ Setup completed successfully!", null);
+                    " Setup completed successfully!", null);
             } else {
-                log.info("ℹ️ No setup steps required");
+                log.info("ℹ No setup steps required");
                 adminTestHandler.broadcastLog(vmName, "info", 
-                    "ℹ️ No setup steps required. Lab is ready!", null);
+                    "ℹ No setup steps required. Lab is ready!", null);
             }
             
             adminTestHandler.broadcastLog(vmName, "success", 
-                "✅ Lab test environment is ready!", null);
+                "Lab test environment is ready!", null);
             
             log.info("========================================");
-            log.info("✅ LAB TEST COMPLETED SUCCESSFULLY");
+            log.info("LAB TEST COMPLETED SUCCESSFULLY");
             log.info("Test VM Name: {}", vmName);
             log.info("Pod Name: {}", podName);
             log.info("========================================");
             
         } catch (Exception e) {
-            log.error("❌ Error during lab test: {}", e.getMessage(), e);
+            log.error("Error during lab test: {}", e.getMessage(), e);
             adminTestHandler.broadcastLog(vmName, "error", 
-                "❌ Failed to create test VM: " + e.getMessage(), null);
+                "Failed to create test VM: " + e.getMessage(), null);
         }
     }
 }

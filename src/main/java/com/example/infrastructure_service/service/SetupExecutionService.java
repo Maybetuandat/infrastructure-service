@@ -2,6 +2,7 @@ package com.example.infrastructure_service.service;
 
 import com.example.infrastructure_service.dto.LabTestRequest;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
+import com.example.infrastructure_service.handler.AdminTestWebSocketHandler;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.*;
@@ -28,6 +29,7 @@ public class SetupExecutionService {
     private final ObjectMapper objectMapper;
     private final ApiClient apiClient;
     
+    private final AdminTestWebSocketHandler adminTestWebSocketHandler;
     private static final Logger executionLogger = LoggerFactory.getLogger("executionLogger");
     
      @Value("${ssh.default.username}")
@@ -38,15 +40,18 @@ public class SetupExecutionService {
     
     public SetupExecutionService(
             ObjectMapper objectMapper,
-            @Qualifier("longTimeoutApiClient") ApiClient apiClient) {
+            @Qualifier("longTimeoutApiClient") ApiClient apiClient, 
+            AdminTestWebSocketHandler adminTestWebSocketHandler) {
         this.objectMapper = objectMapper;
         this.apiClient = apiClient;
         this.apiClient.setReadTimeout(0);
+        this.adminTestWebSocketHandler = adminTestWebSocketHandler;
     }
     
     public void executeSetupStepsForTest(LabTestRequest request, String podName) throws Exception {
         log.info("Starting setup steps execution for lab test: {} via K8s SocketFactory", request.getTestVmName());
         
+        String vmName = request.getTestVmName();
         JSch jsch = new JSch();
         Session sshSession = null;
         
@@ -58,17 +63,22 @@ public class SetupExecutionService {
             
             if (setupSteps.isEmpty()) {
                 log.info("No setup steps to execute for test VM {}", request.getTestVmName());
+                   adminTestWebSocketHandler.broadcastLog(vmName, "info", "No setup steps to execute", null);
                 return;
             }
             
             setupSteps = setupSteps.stream()
                 .sorted(Comparator.comparing(step -> (Integer) step.get("stepOrder")))
                 .collect(Collectors.toList());
-            
+
+            adminTestWebSocketHandler.broadcastLog(vmName, "info", 
+                String.format("Found %d setup steps to execute", setupSteps.size()), null);
             sshSession = connectSshWithRetry(jsch, request.getNamespace(), podName, 20, 5000);
+            adminTestWebSocketHandler.broadcastLog(vmName, "success", "SSH connected successfully", null);
             
             log.info("[Test VM {}] SSH connected via K8s Tunnel. Executing steps...", request.getTestVmName());
-            
+            int currentStep = 0;
+            int totalSteps = setupSteps.size();
             for (Map<String, Object> step : setupSteps) {
                 String title = (String) step.get("title");
                 String command = (String) step.get("setupCommand");
@@ -78,21 +88,66 @@ public class SetupExecutionService {
                 
                 log.info("[Test VM {}] Executing: {}", request.getTestVmName(), title);
                 
+                adminTestWebSocketHandler.broadcastLog(vmName, "step-start", 
+                    String.format(" [%d/%d] Executing: %s", currentStep, totalSteps, title),
+                    Map.of(
+                        "stepNumber", currentStep,
+                        "totalSteps", totalSteps,
+                        "title", title,
+                        "command", command
+                    ));
                 ExecuteCommandResult result = executeCommandOnSession(
                     sshSession, 
                     command, 
                     timeoutSeconds
                 );
                 
+                
                 logStepResult(request.getTestVmName(), title, result, expectedExitCode);
                 
+                boolean isSuccess = result.getExitCode() == expectedExitCode;
+                 if (isSuccess) {
+                    adminTestWebSocketHandler.broadcastLog(vmName, "step-success",
+                        String.format("[%d/%d] Completed: %s", currentStep, totalSteps, title),
+                        Map.of(
+                            "stepNumber", currentStep,
+                            "totalSteps", totalSteps,
+                            "title", title,
+                            "exitCode", result.getExitCode(),
+                            "stdout", truncateOutput(result.getStdout(), 500)
+                        ));
+                } else {
+                    adminTestWebSocketHandler.broadcastLog(vmName, "step-failed",
+                        String.format(" [%d/%d] Failed: %s (exit code: %d)", 
+                            currentStep, totalSteps, title, result.getExitCode()),
+                        Map.of(
+                            "stepNumber", currentStep,
+                            "totalSteps", totalSteps,
+                            "title", title,
+                            "exitCode", result.getExitCode(),
+                            "expectedExitCode", expectedExitCode,
+                            "stdout", truncateOutput(result.getStdout(), 500),
+                            "stderr", truncateOutput(result.getStderr(), 500)
+                        ));
+                    
+                    if (!continueOnFailure) {
+                            adminTestWebSocketHandler.broadcastLog(vmName, "error",
+                            " Setup aborted due to step failure", null);
+                        break;
+                    } else {
+                        adminTestWebSocketHandler.broadcastLog(vmName, "warning",
+                            " Continuing despite failure (continueOnFailure=true)", null);
+                    }
+                }
                 if (result.getExitCode() != expectedExitCode) {
                     if (!continueOnFailure) {
                         break;
                     }
                 }
             }
-            
+            adminTestWebSocketHandler.broadcastLog(vmName, "setup-complete",
+                String.format("🎉 Setup completed: %d/%d steps executed", currentStep, totalSteps),
+                Map.of("executedSteps", currentStep, "totalSteps", totalSteps));
         } catch (Exception e) {
             log.error("Setup failed for test VM {}: {}", request.getTestVmName(), e.getMessage(), e);
             throw e;
@@ -148,6 +203,7 @@ public class SetupExecutionService {
                     executionLogger.info("USER_SESSION_VM={}|STEP='{}'|SUCCESS", request.getVmName(), description);
                 }
             }
+            
             
             log.info("[User Session VM {}] All setup steps executed successfully.", request.getVmName());
             
@@ -321,5 +377,10 @@ public class SetupExecutionService {
         public int getExitCode() { return exitCode; }
         public String getStdout() { return stdout; }
         public String getStderr() { return stderr; }
+    }
+     private String truncateOutput(String output, int maxLength) {
+        if (output == null) return "";
+        if (output.length() <= maxLength) return output;
+        return output.substring(0, maxLength) + "... [truncated]";
     }
 }

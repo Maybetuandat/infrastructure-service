@@ -1,4 +1,3 @@
-// infrastructure-service/src/main/java/com/example/infrastructure_service/handler/AdminTestWebSocketHandler.java
 package com.example.infrastructure_service.handler;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -24,13 +23,12 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     
-    // Map: podName -> WebSocketSession
+    // podName -> WebSocketSession
     private final Map<String, WebSocketSession> sessions = new ConcurrentHashMap<>();
     
-    // Map: sessionId -> isActive flag
+    // sessionId -> isActive flag
     private final Map<String, AtomicBoolean> activeConnections = new ConcurrentHashMap<>();
-    
-    // Map: podName -> connection latch (for waitForConnection)
+
     private final Map<String, CountDownLatch> connectionLatches = new ConcurrentHashMap<>();
 
     @Override
@@ -38,23 +36,19 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
         if (podName == null || podName.isEmpty()) {
-            log.error("❌ No podName provided in query string for admin test");
+            log.error(" No podName provided in query string for admin test");
             session.close();
             return;
         }
-
-        log.info("📡 Admin test WebSocket connected: session={}, podName={}", 
+        log.info(" Admin test WebSocket connected: session={}, podName={}", 
             session.getId(), podName);
-
-        // Register session
         activeConnections.put(session.getId(), new AtomicBoolean(true));
         sessions.put(podName, session);
         
-        // Release connection latch if waiting
         CountDownLatch latch = connectionLatches.get(podName);
         if (latch != null) {
             latch.countDown();
-            log.info("✅ WebSocket connection latch released for podName: {}", podName);
+            log.info(" WebSocket connection latch released for podName: {}", podName);
         }
     }
 
@@ -62,7 +56,7 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
-        log.info("🔌 Admin test WebSocket disconnected: session={}, podName={}, status={}", 
+        log.info(" Admin test WebSocket disconnected: session={}, podName={}, status={}", 
             session.getId(), podName, status);
         
         activeConnections.remove(session.getId());
@@ -76,7 +70,7 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
-        log.error("❌ Admin test WebSocket error: session={}, podName={}, error={}", 
+        log.error(" Admin test WebSocket error: session={}, podName={}, error={}", 
             session.getId(), podName, exception.getMessage());
         
         activeConnections.remove(session.getId());
@@ -93,17 +87,13 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
             log.debug("Error closing session: {}", e.getMessage());
         }
     }
-
-    /**
-     * Wait for WebSocket client to connect
-     */
     public boolean waitForConnection(String podName, int timeoutSeconds) {
         if (hasActiveSession(podName)) {
-            log.info("✅ Admin test WebSocket already connected for: {}", podName);
+            log.info(" Admin test WebSocket already connected for: {}", podName);
             return true;
         }
         
-        log.info("⏳ Waiting for admin test WebSocket connection: {} (timeout: {}s)", 
+        log.info(" Waiting for admin test WebSocket connection: {} (timeout: {}s)", 
             podName, timeoutSeconds);
         
         CountDownLatch latch = new CountDownLatch(1);
@@ -113,24 +103,20 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
             boolean connected = latch.await(timeoutSeconds, TimeUnit.SECONDS);
             
             if (connected) {
-                log.info("✅ Admin test WebSocket connected within {}s: {}", timeoutSeconds, podName);
+                log.info(" Admin test WebSocket connected within {}s: {}", timeoutSeconds, podName);
                 return true;
             } else {
-                log.warn("⏰ Admin test WebSocket timeout after {}s: {}", timeoutSeconds, podName);
+                log.warn(" Admin test WebSocket timeout after {}s: {}", timeoutSeconds, podName);
                 return false;
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("❌ Interrupted while waiting for connection: {}", podName);
+            log.error(" Admin test WebSocket interrupted while waiting for connection: {}", podName);
             return false;
         } finally {
             connectionLatches.remove(podName);
         }
     }
-
-    /**
-     * Check if there's an active session
-     */
     private boolean hasActiveSession(String podName) {
         WebSocketSession session = sessions.get(podName);
         if (session == null) {
@@ -140,15 +126,11 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
         AtomicBoolean isActive = activeConnections.get(session.getId());
         return session.isOpen() && isActive != null && isActive.get();
     }
-
-    /**
-     * Broadcast log message to connected client
-     */
     public void broadcastLog(String podName, String type, String message, Map<String, Object> data) {
         WebSocketSession session = sessions.get(podName);
         
         if (session == null) {
-            log.debug("⚠️ No admin test session for: {}", podName);
+            log.debug(" No admin test session for: {}", podName);
             return;
         }
 
@@ -156,12 +138,12 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
         AtomicBoolean isActive = activeConnections.get(sessionId);
         
         if (isActive == null || !isActive.get()) {
-            log.debug("⚠️ Inactive admin test session: {}", podName);
+            log.debug(" Inactive admin test session: {}", podName);
             return;
         }
 
         if (!session.isOpen()) {
-            log.debug("⚠️ Closed admin test session: {}", podName);
+            log.debug(" Closed admin test session: {}", podName);
             sessions.remove(podName);
             activeConnections.remove(sessionId);
             return;
@@ -178,17 +160,13 @@ public class AdminTestWebSocketHandler extends TextWebSocketHandler {
             String json = objectMapper.writeValueAsString(payload);
             session.sendMessage(new TextMessage(json));
             
-            log.debug("📤 Admin test log sent: podName={}, type={}", podName, type);
+            log.debug(" Admin test log sent: podName={}, type={}", podName, type);
         } catch (IOException e) {
-            log.error("❌ Failed to send admin test log to {}: {}", podName, e.getMessage());
+            log.error(" Failed to send admin test log to {}: {}", podName, e.getMessage());
             sessions.remove(podName);
             activeConnections.remove(sessionId);
         }
     }
-
-    /**
-     * Extract podName from query string
-     */
     private String extractPodNameFromQuery(String query) {
         if (query == null || query.isEmpty()) {
             return null;
