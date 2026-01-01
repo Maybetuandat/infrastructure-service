@@ -7,11 +7,6 @@ import io.kubernetes.client.openapi.models.V1PodList;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
-import java.io.IOException;
-import java.net.InetSocketAddress;
-import java.net.Socket;
-
 @Service
 @Slf4j
 @RequiredArgsConstructor
@@ -46,25 +41,5 @@ public class KubernetesDiscoveryService {
         throw new RuntimeException("Timeout: Pod with label '" + labelSelector + "' did not enter Running state within " + timeoutSeconds + " seconds.");
     }
 
-    public void waitForSshReady(String host, int port, int timeoutSeconds) throws InterruptedException {
-        log.info("Waiting for SSH service to be ready at {}:{}...", host, port);
-        long startTime = System.currentTimeMillis();
-        boolean isSshReady = false;
-
-        while (System.currentTimeMillis() - startTime < timeoutSeconds * 1000L) {
-            try (Socket socket = new Socket()) {
-                socket.connect(new InetSocketAddress(host, port), 2000);
-                isSshReady = true;
-                log.info("SSH service is ready at {}:{}!", host, port);
-                break;
-            } catch (IOException e) {
-                log.debug("SSH connection failed at {}:{}. Reason: {}", host, port, e.getMessage());
-                Thread.sleep(5000);
-            }
-        }
-
-        if (!isSshReady) {
-            throw new RuntimeException("Timeout: SSH service did not become ready within " + timeoutSeconds + " seconds.");
-        }
-    }
+   
 }

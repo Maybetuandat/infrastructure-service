@@ -31,10 +31,10 @@ public class VMUserSessionService {
     @Qualifier("longTimeoutApiClient")
     private final ApiClient apiClient;
     
-    @Value("${ssh.default.username:ubuntu}")
+    @Value("${ssh.default.username}")
     private String defaultUsername;
 
-    @Value("${ssh.default.password:1234}")
+    @Value("${ssh.default.password}")
     private String defaultPassword;
     
     private static final int WEBSOCKET_TIMEOUT_SECONDS = 30;
