@@ -237,4 +237,54 @@ public class VMService {
             throw e;
         }
     }
+    public void deleteVirtualMachine(String vmName, String namespace) {
+        log.info("Deleting VirtualMachine: {} in namespace: {}", vmName, namespace);
+    
+        
+        try {
+            customApi.deleteNamespacedCustomObject(
+                KUBEVIRT_GROUP, KUBEVIRT_VERSION, namespace, KUBEVIRT_PLURAL_VM, vmName,
+                null, null, null, null, null
+            );
+            log.info("VirtualMachine '{}' deleted successfully.", vmName);
+        } catch (ApiException e) {
+            if (e.getCode() == 404) {
+                log.info("VirtualMachine '{}' not found.", vmName);
+            } else {
+                log.error("Error deleting VirtualMachine: {}", e.getMessage());
+            }
+        }
+    }
+    public void deletePvc(String vmName, String namespace) {
+        log.info("Deleting PVC: {} in namespace: {}", vmName, namespace);    
+        try {
+            coreApi.deleteNamespacedPersistentVolumeClaim(
+                vmName, namespace, null, null, null, null, null, null
+            );
+            log.info("PVC '{}' deleted successfully.", vmName);
+        } catch (ApiException e) {
+            if (e.getCode() == 404) {
+                log.info("PVC '{}' not found.", vmName);
+       
+            } else {
+                log.error("Error deleting PVC: {}", e.getMessage());
+            }
+        }
+    }
+
+    public void deleteTestVmResources(String vmName, String namespace) {
+        log.info("🧹 Starting cleanup for test VM: {}", vmName);
+        deleteVirtualMachine(vmName, namespace);
+        try {
+            Thread.sleep(5000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        deletePvc(vmName, namespace);
+        
+        log.info("Cleanup completed for test VM: {}", vmName);
+       
+    }
+
+
 }

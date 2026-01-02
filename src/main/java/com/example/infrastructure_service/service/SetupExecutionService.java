@@ -88,7 +88,7 @@ public class SetupExecutionService {
                 
                 log.info("[Test VM {}] Executing: {}", request.getTestVmName(), title);
                 
-                adminTestWebSocketHandler.broadcastLog(vmName, "step-start", 
+                adminTestWebSocketHandler.broadcastLog(vmName, "step_start", 
                     String.format(" [%d/%d] Executing: %s", currentStep, totalSteps, title),
                     Map.of(
                         "stepNumber", currentStep,
@@ -107,7 +107,8 @@ public class SetupExecutionService {
                 
                 boolean isSuccess = result.getExitCode() == expectedExitCode;
                  if (isSuccess) {
-                    adminTestWebSocketHandler.broadcastLog(vmName, "step-success",
+                     currentStep++; 
+                    adminTestWebSocketHandler.broadcastLog(vmName, "step_success",
                         String.format("[%d/%d] Completed: %s", currentStep, totalSteps, title),
                         Map.of(
                             "stepNumber", currentStep,
@@ -117,7 +118,7 @@ public class SetupExecutionService {
                             "stdout", truncateOutput(result.getStdout(), 500)
                         ));
                 } else {
-                    adminTestWebSocketHandler.broadcastLog(vmName, "step-failed",
+                    adminTestWebSocketHandler.broadcastLog(vmName, "step_failed",
                         String.format(" [%d/%d] Failed: %s (exit code: %d)", 
                             currentStep, totalSteps, title, result.getExitCode()),
                         Map.of(
@@ -145,7 +146,7 @@ public class SetupExecutionService {
                     }
                 }
             }
-            adminTestWebSocketHandler.broadcastLog(vmName, "setup-complete",
+            adminTestWebSocketHandler.broadcastLog(vmName, "setup_complete",
                 String.format("🎉 Setup completed: %d/%d steps executed", currentStep, totalSteps),
                 Map.of("executedSteps", currentStep, "totalSteps", totalSteps));
         } catch (Exception e) {

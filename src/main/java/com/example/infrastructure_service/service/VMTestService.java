@@ -89,7 +89,15 @@ public class VMTestService {
             
             adminTestHandler.broadcastLog(vmName, "success", 
                 "Lab test environment is ready!", null);
-            
+
+
+
+            log.info("Step 5: Cleaning up test VM resources...");
+            adminTestHandler.broadcastLog(vmName, "info", 
+                " Cleaning up test VM resources...", null);
+            vmService.deleteTestVmResources(vmName, namespace);
+            adminTestHandler.broadcastLog(vmName, "success", 
+                " Cleaning up test vm resource successfully", null);
             log.info("========================================");
             log.info("LAB TEST COMPLETED SUCCESSFULLY");
             log.info("Test VM Name: {}", vmName);
