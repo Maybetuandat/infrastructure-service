@@ -3,7 +3,7 @@ package com.example.infrastructure_service.config;
 
 import com.example.infrastructure_service.handler.AdminTestWebSocketHandler;
 import com.example.infrastructure_service.handler.PodLogWebSocketHandler;
-import com.example.infrastructure_service.service.TerminalSessionService;
+
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +27,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     private final AdminTestWebSocketHandler adminTestHandler;
     private final PodLogWebSocketHandler podLogHandler;
-    private final TerminalSessionService terminalSessionService;
+    
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {

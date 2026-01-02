@@ -1,8 +1,5 @@
-// infrastructure-service/src/main/java/com/example/infrastructure_service/utils/PodLogWebSocketHandler.java
 package com.example.infrastructure_service.handler;
-
 import com.example.infrastructure_service.service.SshSessionCache;
-import com.example.infrastructure_service.service.TerminalSessionService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.ChannelShell;
 import com.jcraft.jsch.Session;
@@ -32,18 +29,10 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
 
     private final ObjectMapper objectMapper;
     private final SshSessionCache sshSessionCache;
-    private final TerminalSessionService terminalSessionService;
-    
-    // ============= WEBSOCKET SESSIONS (Ephemeral - can disconnect/reconnect) =============
     private final Map<String, WebSocketSession> podSessions = new ConcurrentHashMap<>();
     private final Map<String, CountDownLatch> connectionLatches = new ConcurrentHashMap<>();
     private final Map<String, AtomicBoolean> activeConnections = new ConcurrentHashMap<>();
-    
-    // ============= TERMINAL SESSIONS (Persistent - cleanup only on explicit action) =============
-    private final Map<String, TerminalSessionData> terminalSessions = new ConcurrentHashMap<>();
-
-    // ============= WEBSOCKET LIFECYCLE =============
-    
+    private final Map<String, TerminalSessionData> terminalSessions = new ConcurrentHashMap<>();    
     @Override
     public void afterConnectionEstablished(WebSocketSession session) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
@@ -57,29 +46,29 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         log.info("📡 WebSocket connection established for session {} with podName {}", 
             session.getId(), podName);
 
-        // Register WebSocket session (ephemeral)
+        
         activeConnections.put(session.getId(), new AtomicBoolean(true));
         podSessions.put(podName, session);
         
-        // Release connection latch if waiting
+        
         CountDownLatch latch = connectionLatches.get(podName);
         if (latch != null) {
             latch.countDown();
-            log.info("✅ WebSocket connection latch released for podName: {}", podName);
+            log.info(" WebSocket connection latch released for podName: {}", podName);
         }
         
-        // Check if terminal session already exists (reconnect scenario)
+        
         TerminalSessionData terminalSession = terminalSessions.get(podName);
         if (terminalSession != null && terminalSession.isActive()) {
-            log.info("🔄 Reconnection detected - terminal session still active for: {}", podName);
+            log.info(" Reconnection detected - terminal session still active for: {}", podName);
             terminalSession.updateLastActivity();
             
-            // Notify client that terminal is ready
+            
             broadcastLogToPod(podName, "terminal_ready", 
                 "Terminal reconnected. You can continue typing.", 
                 Map.of("labSessionId", terminalSession.getLabSessionId()));
         } else {
-            log.info("🆕 New connection - waiting for terminal setup for: {}", podName);
+            log.info("New connection - waiting for terminal setup for: {}", podName);
         }
     }
 
@@ -87,26 +76,22 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
-        log.info("🔌 WebSocket connection closed for session {} (podName: {}). Status: {}", 
+        log.info(" WebSocket connection closed for session {} (podName: {}). Status: {}", 
             session.getId(), podName, status);
         
-        // Remove WebSocket session (ephemeral)
+        
         activeConnections.remove(session.getId());
         
         if (podName != null) {
             podSessions.remove(podName);
             
-            // ✅ DO NOT cleanup terminal session here - it persists for reconnection
-            // Terminal session will only be cleaned up by:
-            // 1. Explicit cleanup call (e.g., from Kafka event when lab ends)
-            // 2. Application shutdown (@PreDestroy)
             
             TerminalSessionData terminalSession = terminalSessions.get(podName);
             if (terminalSession != null && terminalSession.isActive()) {
-                log.info("ℹ️ Terminal session still active for: {} (client can reconnect)", podName);
+                log.info("ℹ Terminal session still active for: {} (client can reconnect)", podName);
             }
             
-            log.info("🗑️ Removed WebSocket session mapping for podName: {}", podName);
+            log.info(" Removed WebSocket session mapping for podName: {}", podName);
         }
     }
 
@@ -114,15 +99,13 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
     public void handleTransportError(WebSocketSession session, Throwable exception) throws Exception {
         String podName = extractPodNameFromQuery(session.getUri().getQuery());
         
-        log.error("❌ WebSocket transport error for session {} (podName: {}): {}", 
+        log.error(" WebSocket transport error for session {} (podName: {}): {}", 
             session.getId(), podName, exception.getMessage());
-        
-        // Same as afterConnectionClosed - only cleanup WebSocket, not terminal
         activeConnections.remove(session.getId());
         
         if (podName != null) {
             podSessions.remove(podName);
-            log.info("🗑️ Removed WebSocket session due to transport error for podName: {}", podName);
+            log.info(" Removed WebSocket session due to transport error for podName: {}", podName);
         }
         
         try {
@@ -143,36 +126,28 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             return;
         }
         
-        // Check terminal session (persistent) not WebSocket session
         TerminalSessionData terminalSession = terminalSessions.get(podName);
         if (terminalSession != null && terminalSession.isActive()) {
             terminalSession.updateLastActivity();
-            log.debug("📨 Terminal input from client for pod {}: {}", podName, message.getPayload());
+            log.debug("Terminal input from client for pod {}: {}", podName, message.getPayload());
             forwardToTerminal(terminalSession, message.getPayload());
         } else {
-            log.warn("⚠️ No active terminal session for podName: {} - ignoring input", podName);
+            log.warn(" No active terminal session for podName: {} - ignoring input", podName);
         }
     }
-
-    // ============= TERMINAL SESSION LIFECYCLE MANAGEMENT =============
-    
-    /**
-     * Setup terminal session when VM is ready
-     * Called by VMUserSessionService after VM creation
-     */
     public void setupTerminal(String podName, int labSessionId) {
-        log.info("🔧 Setting up terminal session for podName: {} (labSessionId: {})", podName, labSessionId);
+        log.info(" Setting up terminal session for podName: {} (labSessionId: {})", podName, labSessionId);
         
         try {
             String cacheKey = "lab-session-" + labSessionId;
             Session sshSession = sshSessionCache.get(cacheKey);
             
             if (sshSession == null || !sshSession.isConnected()) {
-                log.error("❌ No cached SSH session found for labSessionId: {}", labSessionId);
+                log.error(" No cached SSH session found for labSessionId: {}", labSessionId);
                 throw new IllegalStateException("SSH session not available");
             }
 
-            log.info("✅ Found cached SSH session, opening shell channel...");
+            log.info(" Found cached SSH session, opening shell channel...");
             
             // Open SSH shell channel
             ChannelShell channel = (ChannelShell) sshSession.openChannel("shell");
@@ -180,7 +155,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             channel.setPtySize(80, 24, 640, 480);
             channel.connect();
             
-            log.info("✅ SSH shell channel connected");
+            log.info(" SSH shell channel connected");
 
             InputStream in = channel.getInputStream();
             OutputStream out = channel.getOutputStream();
@@ -191,9 +166,9 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             reader.setDaemon(true);
             reader.start();
             
-            log.info("✅ SSH output reader thread started");
+            log.info(" SSH output reader thread started");
 
-            // Create terminal session data
+            
             TerminalSessionData terminalSession = TerminalSessionData.builder()
                 .podName(podName)
                 .labSessionId(labSessionId)
@@ -207,15 +182,15 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
 
             terminalSessions.put(podName, terminalSession);
             
-            log.info("✅ Terminal session created and stored for: {}", podName);
+            log.info(" Terminal session created and stored for: {}", podName);
             
             // Notify connected clients that terminal is ready
             broadcastLogToPod(podName, "terminal_ready", 
-                "🎉 Terminal is ready! You can now type commands...", 
+                " Terminal is ready! You can now type commands...", 
                 Map.of("labSessionId", labSessionId, "percentage", 100));
                 
         } catch (Exception e) {
-            log.error("❌ Failed to setup terminal session for {}: {}", podName, e.getMessage(), e);
+            log.error(" Failed to setup terminal session for {}: {}", podName, e.getMessage(), e);
             
             // Notify clients of failure
             broadcastLogToPod(podName, "error", 
@@ -223,29 +198,24 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         }
     }
 
-    /**
-     * Cleanup terminal session
-     * Called when lab ends (via Kafka event, API call, or @PreDestroy)
-     * 
-     * TODO: This will be called by Kafka listener when lab session ends
-     */
+   
     public void cleanupTerminal(String podName) {
         log.info("🧹 Cleaning up terminal session for: {}", podName);
         
         TerminalSessionData terminalSession = terminalSessions.remove(podName);
         if (terminalSession == null) {
-            log.warn("⚠️ No terminal session found for: {} (already cleaned up?)", podName);
+            log.warn(" No terminal session found for: {} (already cleaned up?)", podName);
             return;
         }
 
-        // Mark as inactive
+        
         terminalSession.setActive(false);
         
         // Stop output reader thread
         Thread reader = terminalSession.getOutputReaderThread();
         if (reader != null && reader.isAlive()) {
             reader.interrupt();
-            log.debug("✅ Interrupted output reader thread for: {}", podName);
+            log.debug(" Interrupted output reader thread for: {}", podName);
         }
         
         // Close SSH output stream
@@ -253,7 +223,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         if (out != null) {
             try {
                 out.close();
-                log.debug("✅ Closed SSH output stream for: {}", podName);
+                log.debug(" Closed SSH output stream for: {}", podName);
             } catch (IOException e) {
                 log.debug("Error closing SSH output stream: {}", e.getMessage());
             }
@@ -263,12 +233,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         ChannelShell channel = terminalSession.getSshChannel();
         if (channel != null && channel.isConnected()) {
             channel.disconnect();
-            log.debug("✅ Disconnected SSH channel for: {}", podName);
+            log.debug(" Disconnected SSH channel for: {}", podName);
         }
         
-        log.info("✅ Terminal session cleaned up successfully for: {}", podName);
+        log.info(" Terminal session cleaned up successfully for: {}", podName);
         
-        // Notify connected clients that terminal is closed
+        
         broadcastLogToPod(podName, "terminal_closed", 
             "Lab session ended. Terminal is now closed.", 
             Map.of("reason", "lab_ended"));
@@ -279,12 +249,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
      */
     @PreDestroy
     public void cleanupAllTerminals() {
-        log.info("🧹 Application shutdown - cleaning up all terminal sessions...");
+        log.info(" Application shutdown - cleaning up all terminal sessions...");
         
         int count = terminalSessions.size();
         terminalSessions.keySet().forEach(this::cleanupTerminal);
         
-        log.info("✅ Cleaned up {} terminal sessions", count);
+        log.info(" Cleaned up {} terminal sessions", count);
     }
 
     // ============= HELPER METHODS =============
@@ -293,7 +263,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
      * Read SSH output and send to WebSocket clients
      */
     private void readSshOutput(String podName, InputStream in) {
-        log.info("📖 Starting SSH output reader for: {}", podName);
+        log.info(" Starting SSH output reader for: {}", podName);
         
         try {
             byte[] buffer = new byte[4096];
@@ -302,7 +272,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
                 String output = new String(buffer, 0, bytesRead);
                 sendTerminalOutput(podName, output);
             }
-            log.info("📖 SSH output stream ended for: {}", podName);
+            log.info(" SSH output stream ended for: {}", podName);
         } catch (IOException e) {
             if (Thread.currentThread().isInterrupted()) {
                 log.debug("SSH output reader interrupted for: {}", podName);
@@ -319,7 +289,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
         OutputStream out = terminalSession.getSshOutputStream();
         
         if (out == null) {
-            log.warn("⚠️ No SSH output stream for terminal session");
+            log.warn(" No SSH output stream for terminal session");
             return;
         }
         
@@ -341,11 +311,11 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
      */
     public boolean waitForConnection(String podName, int timeoutSeconds) {
         if (hasActiveWebSocketSession(podName)) {
-            log.info("✅ WebSocket already connected for pod: {}", podName);
+            log.info(" WebSocket already connected for pod: {}", podName);
             return true;
         }
         
-        log.info("⏳ Waiting for WebSocket connection for pod: {} (timeout: {}s)", podName, timeoutSeconds);
+        log.info(" Waiting for WebSocket connection for pod: {} (timeout: {}s)", podName, timeoutSeconds);
         
         CountDownLatch latch = new CountDownLatch(1);
         connectionLatches.put(podName, latch);
