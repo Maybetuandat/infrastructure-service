@@ -4,8 +4,10 @@ import java.util.Map;
 
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import com.example.infrastructure_service.dto.LabSessionReadyEvent;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
 import com.example.infrastructure_service.handler.PodLogWebSocketHandler;
+import com.example.infrastructure_service.kafka.LabSessionReadyProducer;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 import com.example.infrastructure_service.service.SetupExecutionService.K8sTunnelSocketFactory;
@@ -27,6 +29,7 @@ public class VMUserSessionService {
     private final PodLogWebSocketHandler webSocketHandler;
     private final TerminalSessionService terminalSessionService;
     private final SshSessionCache sshSessionCache;
+    private final LabSessionReadyProducer labSessionReadyProducer;
     
     @Qualifier("longTimeoutApiClient")
     private final ApiClient apiClient;
@@ -50,56 +53,49 @@ public class VMUserSessionService {
         
         try {
             log.info("========================================");
-            log.info("🚀 STARTING USER LAB SESSION");
+            log.info("STARTING USER LAB SESSION");
             log.info("Lab Session ID: {}", request.getLabSessionId());
             log.info("VM Name: {}", vmName);
             log.info("========================================");
             
-            // Step 0: Wait for WebSocket connection
             currentStep = 0;
-            broadcastProgress(vmName, currentStep, totalSteps, "⏳ Waiting for WebSocket client to connect...");
+            broadcastProgress(vmName, currentStep, totalSteps, "Waiting for WebSocket client to connect...");
             
             boolean wsConnected = webSocketHandler.waitForConnection(vmName, WEBSOCKET_TIMEOUT_SECONDS);
             
             if (!wsConnected) {
-                log.warn("⚠️ WebSocket connection timeout after {}s. Proceeding anyway.", WEBSOCKET_TIMEOUT_SECONDS);
+                log.warn("WebSocket connection timeout after {}s. Proceeding anyway.", WEBSOCKET_TIMEOUT_SECONDS);
             } else {
-                log.info("✅ WebSocket client connected successfully!");
+                log.info("WebSocket client connected successfully!");
             }
             
-            // Step 1: Create Kubernetes resources
             currentStep = 1;
-            broadcastProgress(vmName, currentStep, totalSteps, "🔧 Step 1: Creating Kubernetes resources (VM, PVC)...");
+            broadcastProgress(vmName, currentStep, totalSteps, "Step 1: Creating Kubernetes resources (VM, PVC)...");
             vmService.createKubernetesResourcesForUserSession(request);
-            broadcastSuccess(vmName, "✅ Kubernetes resources created successfully");
+            broadcastSuccess(vmName, "Kubernetes resources created successfully");
             
-            // Step 2: Wait for VM pod to be running
             currentStep = 2;
-            broadcastProgress(vmName, currentStep, totalSteps, "🔧 Step 2: Waiting for VM pod to be running...");
+            broadcastProgress(vmName, currentStep, totalSteps, "Step 2: Waiting for VM pod to be running...");
             V1Pod pod = discoveryService.waitForPodRunning(vmName, namespace, 600);
             String podName = pod.getMetadata().getName();
-            log.info("✅ Pod is running: {}", podName);
-            broadcastSuccess(vmName, "✅ Pod is running: " + podName);
+            log.info("Pod is running: {}", podName);
+            broadcastSuccess(vmName, "Pod is running: " + podName);
             
-            // Step 3: Skip setup (no setup steps)
             currentStep = 3;
-            log.info("ℹ️ No setup steps required");
-            broadcastInfo(vmName, "ℹ️ No setup steps required");
+            log.info("No setup steps required");
+            broadcastInfo(vmName, "No setup steps required");
             
-            // Step 4: Pre-connect SSH (warm up connection, DO NOT disconnect)
             currentStep = 4;
-            broadcastProgress(vmName, currentStep, totalSteps, "🔧 Step 4: Pre-connecting SSH to VM...");
+            broadcastProgress(vmName, currentStep, totalSteps, "Step 4: Pre-connecting SSH to VM...");
             preConnectAndCacheSSH(vmName, namespace, podName, request.getLabSessionId());
-            broadcastSuccess(vmName, "✅ SSH pre-connection successful");
+            broadcastSuccess(vmName, "SSH pre-connection successful");
             
-            // Step 5: Register terminal session
             currentStep = 5;
-            broadcastProgress(vmName, currentStep, totalSteps, "🔧 Step 5: Registering terminal session...");
+            broadcastProgress(vmName, currentStep, totalSteps, "Step 5: Registering terminal session...");
             terminalSessionService.registerSession(request.getLabSessionId(), vmName, namespace, podName);
             
-            // COMPLETION - Send terminal_ready
             log.info("========================================");
-            log.info("✅ USER LAB SESSION COMPLETED SUCCESSFULLY");
+            log.info("USER LAB SESSION COMPLETED SUCCESSFULLY");
             log.info("Lab Session ID: {}", request.getLabSessionId());
             log.info("VM Name: {}", vmName);
             log.info("Pod Name: {}", podName);
@@ -108,14 +104,32 @@ public class VMUserSessionService {
             
             broadcastTerminalReady(vmName, request.getLabSessionId());
             
+            sendLabSessionReadyEvent(request.getLabSessionId(), vmName, podName, request.getLabId());
+            
         } catch (Exception e) {
-            log.error("❌ Error during user lab session setup: {}", e.getMessage(), e);
-            broadcastError(vmName, "❌ Setup failed: " + e.getMessage());
+            log.error("Error during user lab session setup: {}", e.getMessage(), e);
+            broadcastError(vmName, "Setup failed: " + e.getMessage());
+        }
+    }
+    
+    private void sendLabSessionReadyEvent(int labSessionId, String vmName, String podName, Integer labId) {
+        try {
+            LabSessionReadyEvent event = LabSessionReadyEvent.builder()
+                .labSessionId(labSessionId)
+                .vmName(vmName)
+                .podName(podName)
+                .labId(labId)
+                .build();
+            
+            labSessionReadyProducer.sendLabSessionReady(event);
+            log.info("Sent lab session ready event for labSessionId: {}", labSessionId);
+        } catch (Exception e) {
+            log.error("Failed to send lab session ready event: {}", e.getMessage(), e);
         }
     }
     
     private void preConnectAndCacheSSH(String vmName, String namespace, String podName, int labSessionId) {
-        log.info("🔄 Starting SSH pre-connection to VM: {}", vmName);
+        log.info("Starting SSH pre-connection to VM: {}", vmName);
         
         JSch jsch = new JSch();
         String cacheKey = "lab-session-" + labSessionId;
@@ -123,9 +137,9 @@ public class VMUserSessionService {
         for (int attempt = 1; attempt <= SSH_MAX_RETRIES; attempt++) {
             Session sshSession = null;
             try {
-                log.info("🔄 [{}] SSH pre-connection attempt {}/{}", vmName, attempt, SSH_MAX_RETRIES);
+                log.info("[{}] SSH pre-connection attempt {}/{}", vmName, attempt, SSH_MAX_RETRIES);
                 webSocketHandler.broadcastLogToPod(vmName, "info", 
-                    String.format("🔄 SSH connection attempt %d/%d", attempt, SSH_MAX_RETRIES), null);
+                    String.format("SSH connection attempt %d/%d", attempt, SSH_MAX_RETRIES), null);
                 
                 sshSession = jsch.getSession(defaultUsername, vmName, 22);
                 sshSession.setPassword(defaultPassword);
@@ -140,19 +154,17 @@ public class VMUserSessionService {
                 sshSession.setTimeout(10000);
                 sshSession.connect(10000);
                 
-                log.info("✅ [{}] SSH pre-connected successfully on attempt {}", vmName, attempt);
+                log.info("[{}] SSH pre-connected successfully on attempt {}", vmName, attempt);
                 
-                // CRITICAL: Cache session for reuse, DO NOT disconnect
                 sshSessionCache.put(cacheKey, sshSession);
-                log.info("💾 [{}] SSH session cached with key: {}", vmName, cacheKey);
+                log.info("[{}] SSH session cached with key: {}", vmName, cacheKey);
                 
                 return;
                 
             } catch (Exception e) {
-                log.warn("⚠️ [{}] SSH pre-connection attempt {}/{} failed: {}", 
+                log.warn("[{}] SSH pre-connection attempt {}/{} failed: {}", 
                     vmName, attempt, SSH_MAX_RETRIES, e.getMessage());
                 
-                // Cleanup failed session
                 if (sshSession != null && sshSession.isConnected()) {
                     try {
                         sshSession.disconnect();
@@ -193,14 +205,11 @@ public class VMUserSessionService {
         webSocketHandler.broadcastLogToPod(vmName, "error", message, null);
     }
     
-    
     private void broadcastTerminalReady(String vmName, int labSessionId) {
-        // Send terminal_ready message to client
         webSocketHandler.broadcastLogToPod(vmName, "terminal_ready", 
-            "🎉 Terminal is ready! You can now type commands...", 
+            "Terminal is ready! You can now type commands...", 
             Map.of("labSessionId", labSessionId, "percentage", 100));
         
-        // Setup persistent terminal session (new method)
         webSocketHandler.setupTerminal(vmName, labSessionId);
-}
+    }
 }
