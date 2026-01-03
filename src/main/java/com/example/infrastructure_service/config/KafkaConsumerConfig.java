@@ -13,6 +13,7 @@ import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.support.serializer.ErrorHandlingDeserializer;
 import org.springframework.kafka.support.serializer.JsonDeserializer;
 
+import com.example.infrastructure_service.dto.LabSessionCleanupRequest;
 import com.example.infrastructure_service.dto.LabTestRequest;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
 
@@ -83,6 +84,20 @@ public class KafkaConsumerConfig {
         ConcurrentKafkaListenerContainerFactory<String, ValidationRequest> factory = 
             new ConcurrentKafkaListenerContainerFactory<>();
         factory.setConsumerFactory(validationConsumerFactory());
+        return factory;
+    }
+
+    @Bean
+    public ConsumerFactory<String, LabSessionCleanupRequest> cleanupConsumerFactory() {
+        Map<String, Object> props = getCommonConsumerProps();
+        props.put(JsonDeserializer.VALUE_DEFAULT_TYPE, LabSessionCleanupRequest.class.getName());
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, LabSessionCleanupRequest> cleanupKafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, LabSessionCleanupRequest> factory =
+                new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(cleanupConsumerFactory());
         return factory;
     }
 }
