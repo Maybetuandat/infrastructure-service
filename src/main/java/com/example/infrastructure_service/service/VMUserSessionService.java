@@ -1,5 +1,6 @@
 package com.example.infrastructure_service.service;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import org.springframework.scheduling.annotation.Async;
@@ -94,17 +95,23 @@ public class VMUserSessionService {
             broadcastProgress(vmName, currentStep, totalSteps, "Step 5: Registering terminal session...");
             terminalSessionService.registerSession(request.getLabSessionId(), vmName, namespace, podName);
             
+            int estimatedTimeMinutes = request.getEstimatedTimeMinutes() != null 
+                ? request.getEstimatedTimeMinutes() 
+                : 60;
+            LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(estimatedTimeMinutes);
+            String expiresAtStr = expiresAt.toString();
             log.info("========================================");
             log.info("USER LAB SESSION COMPLETED SUCCESSFULLY");
             log.info("Lab Session ID: {}", request.getLabSessionId());
             log.info("VM Name: {}", vmName);
             log.info("Pod Name: {}", podName);
+            log.info("Expires At: {}", expiresAtStr);
             log.info("Terminal URL: /ws/terminal/{}", request.getLabSessionId());
             log.info("========================================");
             
-            broadcastTerminalReady(vmName, request.getLabSessionId());
+            broadcastTerminalReady(vmName, request.getLabSessionId(), expiresAtStr);
             
-            sendLabSessionReadyEvent(request.getLabSessionId(), vmName, podName, request.getLabId());
+            sendLabSessionReadyEvent(request.getLabSessionId(), vmName, podName, request.getLabId(), estimatedTimeMinutes);
             
         } catch (Exception e) {
             log.error("Error during user lab session setup: {}", e.getMessage(), e);
@@ -112,22 +119,22 @@ public class VMUserSessionService {
         }
     }
     
-    private void sendLabSessionReadyEvent(int labSessionId, String vmName, String podName, Integer labId) {
+    private void sendLabSessionReadyEvent(int labSessionId, String vmName, String podName, Integer labId, int estimatedTimeMinutes) {
         try {
             LabSessionReadyEvent event = LabSessionReadyEvent.builder()
                 .labSessionId(labSessionId)
                 .vmName(vmName)
                 .podName(podName)
                 .labId(labId)
+                .estimatedTimeMinutes(estimatedTimeMinutes)
                 .build();
-            
+
             labSessionReadyProducer.sendLabSessionReady(event);
             log.info("Sent lab session ready event for labSessionId: {}", labSessionId);
         } catch (Exception e) {
             log.error("Failed to send lab session ready event: {}", e.getMessage(), e);
         }
     }
-    
     private void preConnectAndCacheSSH(String vmName, String namespace, String podName, int labSessionId) {
         log.info("Starting SSH pre-connection to VM: {}", vmName);
         
@@ -205,11 +212,15 @@ public class VMUserSessionService {
         webSocketHandler.broadcastLogToPod(vmName, "error", message, null);
     }
     
-    private void broadcastTerminalReady(String vmName, int labSessionId) {
-        webSocketHandler.broadcastLogToPod(vmName, "terminal_ready", 
-            "Terminal is ready! You can now type commands...", 
-            Map.of("labSessionId", labSessionId, "percentage", 100));
-        
+    private void broadcastTerminalReady(String vmName, int labSessionId, String expiresAt) {
+        webSocketHandler.broadcastLogToPod(vmName, "terminal_ready",
+            "Terminal is ready! You can now type commands...",
+            Map.of(
+                "labSessionId", labSessionId,
+                "percentage", 100,
+                "expiresAt", expiresAt
+            ));
+
         webSocketHandler.setupTerminal(vmName, labSessionId);
     }
 }

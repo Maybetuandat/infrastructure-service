@@ -16,4 +16,5 @@ public class UserLabSessionRequest {
     private Integer labId;
     private InstanceTypeDTO instanceType;
     private String setupStepsJson;
+    private Integer estimatedTimeMinutes;
 }
