@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -135,7 +136,7 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             log.warn(" No active terminal session for podName: {} - ignoring input", podName);
         }
     }
-    public void setupTerminal(String podName, int labSessionId) {
+    public void setupTerminal(String podName, int labSessionId, String expiresAt) {
         log.info(" Setting up terminal session for podName: {} (labSessionId: {})", podName, labSessionId);
         
         try {
@@ -184,10 +185,12 @@ public class PodLogWebSocketHandler extends TextWebSocketHandler {
             
             log.info(" Terminal session created and stored for: {}", podName);
             
-            // Notify connected clients that terminal is ready
-            broadcastLogToPod(podName, "terminal_ready", 
-                " Terminal is ready! You can now type commands...", 
-                Map.of("labSessionId", labSessionId, "percentage", 100));
+            Map<String, Object> data = new HashMap<>();
+            data.put("labSessionId", labSessionId);
+            data.put("percentage", 100);
+            data.put("expiresAt", expiresAt); // Đảm bảo có dòng này
+            broadcastLogToPod(podName, "terminal_ready", "Terminal is ready!", data);
+    log.info("Terminal session created and stored for: {}", podName);
                 
         } catch (Exception e) {
             log.error(" Failed to setup terminal session for {}: {}", podName, e.getMessage(), e);

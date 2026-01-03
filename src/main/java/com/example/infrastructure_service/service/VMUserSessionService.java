@@ -1,7 +1,10 @@
 package com.example.infrastructure_service.service;
 
-import java.time.LocalDateTime;
+
+import java.util.HashMap;
 import java.util.Map;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -98,8 +101,10 @@ public class VMUserSessionService {
             int estimatedTimeMinutes = request.getEstimatedTimeMinutes() != null 
                 ? request.getEstimatedTimeMinutes() 
                 : 60;
-            LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(estimatedTimeMinutes);
-            String expiresAtStr = expiresAt.toString();
+            
+            String expiresAtStr = OffsetDateTime.now(ZoneOffset.UTC)
+                                     .plusMinutes(estimatedTimeMinutes)
+                                     .toString();
             log.info("========================================");
             log.info("USER LAB SESSION COMPLETED SUCCESSFULLY");
             log.info("Lab Session ID: {}", request.getLabSessionId());
@@ -108,6 +113,7 @@ public class VMUserSessionService {
             log.info("Expires At: {}", expiresAtStr);
             log.info("Terminal URL: /ws/terminal/{}", request.getLabSessionId());
             log.info("========================================");
+            log.info("Expires At (UTC): {}", expiresAtStr);
             
             broadcastTerminalReady(vmName, request.getLabSessionId(), expiresAtStr);
             
@@ -212,15 +218,13 @@ public class VMUserSessionService {
         webSocketHandler.broadcastLogToPod(vmName, "error", message, null);
     }
     
-    private void broadcastTerminalReady(String vmName, int labSessionId, String expiresAt) {
-        webSocketHandler.broadcastLogToPod(vmName, "terminal_ready",
-            "Terminal is ready! You can now type commands...",
-            Map.of(
-                "labSessionId", labSessionId,
-                "percentage", 100,
-                "expiresAt", expiresAt
-            ));
-
-        webSocketHandler.setupTerminal(vmName, labSessionId);
-    }
+   private void broadcastTerminalReady(String vmName, int labSessionId, String expiresAt) {
+    Map<String, Object> data = new HashMap<>();
+    data.put("labSessionId", labSessionId);
+    data.put("percentage", 100);
+    String finalTime = expiresAt != null ? expiresAt : OffsetDateTime.now(ZoneOffset.UTC).plusHours(1).toString();
+    data.put("expiresAt", finalTime);
+    log.info("DEBUG: Gửi terminal_ready lần 1: {}", data);
+    webSocketHandler.setupTerminal(vmName, labSessionId, finalTime); 
+}
 }
