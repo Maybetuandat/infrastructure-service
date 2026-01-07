@@ -186,8 +186,9 @@ public class SetupExecutionService {
             for (Map<String, Object> step : setupSteps) {
                 Integer stepOrder = (Integer) step.get("stepOrder");
                 String description = (String) step.get("description");
-                String commandScript = (String) step.get("commandScript");
                 
+                
+                String commandScript = (String) step.get("setupCommand");
                 log.info("[User Session VM {}] Executing Step {}: {}", request.getVmName(), stepOrder, description);
                 executionLogger.info("Executing Step {}: {}", stepOrder, description);
                 
