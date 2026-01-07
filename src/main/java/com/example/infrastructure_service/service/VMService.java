@@ -3,7 +3,9 @@ package com.example.infrastructure_service.service;
 import io.kubernetes.client.openapi.ApiException;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.apis.CustomObjectsApi;
+import io.kubernetes.client.openapi.apis.NetworkingV1Api;
 import io.kubernetes.client.openapi.models.V1Namespace;
+import io.kubernetes.client.openapi.models.V1NetworkPolicy;
 import io.kubernetes.client.openapi.models.V1ObjectMeta;
 import io.kubernetes.client.openapi.models.V1PersistentVolumeClaim;
 import io.kubernetes.client.util.Yaml;
@@ -30,6 +32,8 @@ public class VMService {
     
     private final CustomObjectsApi customApi;
     private final PodLogWebSocketHandler webSocketHandler;
+    private final NetworkingV1Api networkingApi;
+    private static final String NETWORK_POLICY_NAME = "lab-vm-secure-policy";
     private final CoreV1Api coreApi;
     
     @Value("${KUBEVIRT_GROUP}")
@@ -166,6 +170,7 @@ public class VMService {
         "Starting Kubernetes resource creation...", null);
     
     ensureNamespaceExists(namespace, vmName);
+        ensureNetworkPolicyExists(namespace, vmName);
     
     webSocketHandler.broadcastLogToPod(vmName, "info", 
         "⏳ Creating PersistentVolumeClaim...", null);
@@ -237,6 +242,41 @@ public class VMService {
             throw e;
         }
     }
+
+
+
+
+
+     public void ensureNetworkPolicyExists(String namespace, String vmName) throws IOException, ApiException {
+        log.info("Checking NetworkPolicy '{}' in namespace: {}", NETWORK_POLICY_NAME, namespace);
+        webSocketHandler.broadcastLogToPod(vmName, "info", 
+            "Checking NetworkPolicy: " + NETWORK_POLICY_NAME, null);
+        
+        try {
+            networkingApi.readNamespacedNetworkPolicy(NETWORK_POLICY_NAME, namespace, null);
+            log.info("NetworkPolicy '{}' already exists in namespace '{}'.", NETWORK_POLICY_NAME, namespace);
+            webSocketHandler.broadcastLogToPod(vmName, "info", 
+                "NetworkPolicy '" + NETWORK_POLICY_NAME + "' already exists", null);
+        } catch (ApiException e) {
+            if (e.getCode() == 404) {
+                log.info("NetworkPolicy '{}' not found in namespace '{}'. Creating...", NETWORK_POLICY_NAME, namespace);
+                webSocketHandler.broadcastLogToPod(vmName, "info", 
+                    "Creating NetworkPolicy: " + NETWORK_POLICY_NAME, null);
+                
+                createNetworkPolicy(namespace, vmName);
+                
+                log.info("NetworkPolicy '{}' created successfully in namespace '{}'.", NETWORK_POLICY_NAME, namespace);
+                webSocketHandler.broadcastLogToPod(vmName, "success", 
+                    "NetworkPolicy '" + NETWORK_POLICY_NAME + "' created successfully", null);
+            } else {
+                log.error("Error checking NetworkPolicy '{}' in namespace '{}'. Status code: {}. Response body: {}",
+                        NETWORK_POLICY_NAME, namespace, e.getCode(), e.getResponseBody());
+                webSocketHandler.broadcastLogToPod(vmName, "error", 
+                    "Error checking NetworkPolicy: " + e.getMessage(), null);
+                throw e;
+            }
+        }
+    }
     public void deleteVirtualMachine(String vmName, String namespace) {
         log.info("Deleting VirtualMachine: {} in namespace: {}", vmName, namespace);
     
@@ -268,6 +308,27 @@ public class VMService {
        
             } else {
                 log.error("Error deleting PVC: {}", e.getMessage());
+            }
+        }
+    }
+    private void createNetworkPolicy(String namespace, String vmName) throws IOException, ApiException {
+        Map<String, String> values = Map.of(
+                "NAMESPACE", namespace
+        );
+        
+        String networkPolicyYaml = loadAndRenderTemplate("templates/network-policy.yaml", values);
+        V1NetworkPolicy networkPolicyBody = Yaml.loadAs(networkPolicyYaml, V1NetworkPolicy.class);
+        
+        try {
+            networkingApi.createNamespacedNetworkPolicy(namespace, networkPolicyBody, null, null, null, null);
+            log.info("NetworkPolicy '{}' created successfully in namespace '{}'.", NETWORK_POLICY_NAME, namespace);
+        } catch (ApiException e) {
+            if (e.getCode() == 409) {
+                log.info("NetworkPolicy '{}' already exists in namespace '{}'.", NETWORK_POLICY_NAME, namespace);
+            } else {
+                log.error("K8S API Exception when creating NetworkPolicy. Status code: {}. Response body: {}", 
+                    e.getCode(), e.getResponseBody());
+                throw e;
             }
         }
     }

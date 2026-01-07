@@ -90,7 +90,7 @@ public class VMUserSessionService {
             log.info("execution setup for user session...");
             
 
-            setupExecutionService.executeSetupStepsForUserSession(request, podName);
+            // setupExecutionService.executeSetupStepsForUserSession(request, podName);
 
             broadcastSuccess(vmName, "Setup steps executed successfully");
             

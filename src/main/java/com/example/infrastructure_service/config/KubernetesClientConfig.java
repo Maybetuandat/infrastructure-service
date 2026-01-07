@@ -1,7 +1,9 @@
 package com.example.infrastructure_service.config;
+
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.apis.CoreV1Api;
 import io.kubernetes.client.openapi.apis.CustomObjectsApi;
+import io.kubernetes.client.openapi.apis.NetworkingV1Api;
 import io.kubernetes.client.util.ClientBuilder;
 import io.kubernetes.client.util.Config;
 import io.kubernetes.client.util.KubeConfig;
@@ -16,8 +18,6 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 
-
-// nếu ngoài cụm, cần có file config. nếu trong cụm, tự động lấy service account 
 @Configuration
 @Slf4j
 public class KubernetesClientConfig {
@@ -59,6 +59,11 @@ public class KubernetesClientConfig {
     @Bean
     public CustomObjectsApi customObjectsApi(ApiClient apiClient) {
         return new CustomObjectsApi(apiClient);
+    }
+
+    @Bean
+    public NetworkingV1Api networkingV1Api(ApiClient apiClient) {
+        return new NetworkingV1Api(apiClient);
     }
 
     @Bean("longTimeoutApiClient")
