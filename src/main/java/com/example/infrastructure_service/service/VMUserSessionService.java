@@ -87,8 +87,12 @@ public class VMUserSessionService {
             broadcastSuccess(vmName, "Pod is running: " + podName);
             
             currentStep = 3;
-            log.info("No setup steps required");
-            broadcastInfo(vmName, "No setup steps required");
+            log.info("execution setup for user session...");
+            
+
+            setupExecutionService.executeSetupStepsForUserSession(request, podName);
+
+            broadcastSuccess(vmName, "Setup steps executed successfully");
             
             currentStep = 4;
             broadcastProgress(vmName, currentStep, totalSteps, "Step 4: Pre-connecting SSH to VM...");

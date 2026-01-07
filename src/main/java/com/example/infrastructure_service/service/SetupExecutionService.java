@@ -145,7 +145,7 @@ public class SetupExecutionService {
                 }
             }
             adminTestWebSocketHandler.broadcastLog(vmName, "setup_complete",
-                String.format("🎉 Setup completed: %d/%d steps executed", currentStep, totalSteps),
+                String.format(" Setup completed: %d/%d steps executed", currentStep, totalSteps),
                 Map.of("executedSteps", currentStep, "totalSteps", totalSteps));
         } catch (Exception e) {
             log.error("Setup failed for test VM {}: {}", request.getTestVmName(), e.getMessage(), e);
