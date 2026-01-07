@@ -1,12 +1,13 @@
 package com.example.infrastructure_service.service;
 
+import com.example.infrastructure_service.dto.ExecuteCommandResult;
 import com.example.infrastructure_service.dto.LabTestRequest;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
 import com.example.infrastructure_service.handler.AdminTestWebSocketHandler;
+import com.example.infrastructure_service.socket.K8sTunnelSocketFactory;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jcraft.jsch.*;
-import io.kubernetes.client.PortForward;
 import io.kubernetes.client.openapi.ApiClient;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
@@ -14,11 +15,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.Socket;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -258,6 +256,7 @@ public class SetupExecutionService {
             byte[] buffer = new byte[1024];
             long startTime = System.currentTimeMillis();
             
+            // do cơ chế của jsch là bất đồng bộ nên phải liên tục kiểm tra xem có dữ liệu trả về hay không 
             while (true) {
                 while (in.available() > 0) {
                     int i = in.read(buffer, 0, 1024);
@@ -297,88 +296,9 @@ public class SetupExecutionService {
         }
     }
     
-    public static class K8sTunnelSocketFactory implements SocketFactory {
-        private final ApiClient apiClient;
-        private final String namespace;
-        private final String podName;
-        
-        public K8sTunnelSocketFactory(ApiClient apiClient, String namespace, String podName) {
-            this.apiClient = apiClient;
-            this.namespace = namespace;
-            this.podName = podName;
-        }
-        
-        @Override
-        public Socket createSocket(String host, int port) throws IOException {
-            try {
-                PortForward forward = new PortForward(apiClient);
-                PortForward.PortForwardResult result = forward.forward(
-                    namespace, podName, Collections.singletonList(22)
-                );
-                
-                return new VirtualSocket(result.getInputStream(22), result.getOutboundStream(22));
-            } catch (Exception e) {
-                throw new IOException("Failed to create K8s tunnel: " + e.getMessage(), e);
-            }
-        }
-        
-        @Override
-        public InputStream getInputStream(Socket socket) throws IOException {
-            return socket.getInputStream();
-        }
-        
-        @Override
-        public OutputStream getOutputStream(Socket socket) throws IOException {
-            return socket.getOutputStream();
-        }
-    }
     
-    public static class VirtualSocket extends Socket {
-        private final InputStream in;
-        private final OutputStream out;
-        
-        public VirtualSocket(InputStream in, OutputStream out) {
-            this.in = in;
-            this.out = out;
-        }
-        
-        @Override
-        public InputStream getInputStream() {
-            return in;
-        }
-        
-        @Override
-        public OutputStream getOutputStream() {
-            return out;
-        }
-        
-        @Override
-        public boolean isConnected() {
-            return true;
-        }
-        
-        @Override
-        public void close() throws IOException {
-            if(in != null) in.close();
-            if(out != null) out.close();
-        }
-    }
     
-    private static class ExecuteCommandResult {
-        private final int exitCode;
-        private final String stdout;
-        private final String stderr;
-        
-        public ExecuteCommandResult(int exitCode, String stdout, String stderr) {
-            this.exitCode = exitCode;
-            this.stdout = stdout;
-            this.stderr = stderr;
-        }
-        
-        public int getExitCode() { return exitCode; }
-        public String getStdout() { return stdout; }
-        public String getStderr() { return stderr; }
-    }
+   
      private String truncateOutput(String output, int maxLength) {
         if (output == null) return "";
         if (output.length() <= maxLength) return output;

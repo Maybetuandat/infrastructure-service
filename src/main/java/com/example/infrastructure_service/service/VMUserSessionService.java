@@ -12,9 +12,10 @@ import com.example.infrastructure_service.dto.LabSessionReadyEvent;
 import com.example.infrastructure_service.dto.UserLabSessionRequest;
 import com.example.infrastructure_service.handler.PodLogWebSocketHandler;
 import com.example.infrastructure_service.kafka.LabSessionReadyProducer;
+import com.example.infrastructure_service.socket.K8sTunnelSocketFactory;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
-import com.example.infrastructure_service.service.SetupExecutionService.K8sTunnelSocketFactory;
+
 import io.kubernetes.client.openapi.ApiClient;
 import io.kubernetes.client.openapi.models.V1Pod;
 import lombok.RequiredArgsConstructor;

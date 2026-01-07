@@ -27,21 +27,12 @@ public class ResourceCleanupService {
                 request.getLabSessionId(), request.getVmName(), request.getNamespace());
 
         try {
-            // Step 1: Cleanup terminal session (close SSH channel first)
             log.info("Step 1: Cleaning up terminal session...");
             cleanupTerminalSession(request);
-
-            // Wait for SSH connections to fully close
             sleep(SSH_CLEANUP_DELAY_MS);
-
-            // Step 2: Cleanup SSH session cache
             log.info("Step 2: Cleaning up SSH session cache...");
             cleanupSshSession(request);
-
-            // Wait before deleting K8s resources
             sleep(K8S_RESOURCE_DELAY_MS);
-
-            // Step 3: Delete Kubernetes resources (VM + PVC)
             log.info("Step 3: Deleting Kubernetes resources...");
             deleteKubernetesResources(request);
 
@@ -56,12 +47,8 @@ public class ResourceCleanupService {
 
     private void cleanupTerminalSession(LabSessionCleanupRequest request) {
         try {
-            // Cleanup terminal from PodLogWebSocketHandler
             podLogWebSocketHandler.cleanupTerminal(request.getVmName());
-
-            // Remove from TerminalSessionService
             terminalSessionService.removeSession(request.getLabSessionId());
-
             log.info("Terminal session cleaned up for vmName={}", request.getVmName());
         } catch (Exception e) {
             log.warn("Error cleaning up terminal session: {}", e.getMessage());
@@ -85,8 +72,6 @@ public class ResourceCleanupService {
 
             log.info("Deleting VirtualMachine: {} in namespace: {}", vmName, namespace);
             vmService.deleteVirtualMachine(vmName, namespace);
-
-            // Wait for VM deletion to complete before deleting PVC
             sleep(PVC_DELETE_DELAY_MS);
 
             log.info("Deleting PVC: {} in namespace: {}", vmName, namespace);
